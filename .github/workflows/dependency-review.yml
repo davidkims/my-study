@@ -2,7 +2,7 @@ name: Hourly Vulnerability Snapshot with OSV Scanner
 
 on:
   schedule:
-    - cron: '0 * * * *'  # 매 시간 정각 실행
+    - cron: '0 * * * *'  # 매시간 실행
   workflow_dispatch:
 
 permissions:
@@ -23,56 +23,43 @@ jobs:
           SNAPSHOT_DIR=".security-snapshots/slot-${TIMESTAMP}"
           mkdir -p "$SNAPSHOT_DIR"
           echo "SNAPSHOT_DIR=$SNAPSHOT_DIR" >> $GITHUB_ENV
-          echo "📸 Snapshot path: $SNAPSHOT_DIR"
 
-      - name: Install OSV Scanner (v1.6.2 from tar.gz)
+      - name: Install OSV Scanner (v1.6.2 .deb)
         run: |
-          curl -sSL https://github.com/google/osv-scanner/releases/download/v1.6.2/osv-scanner_1.6.2_linux_amd64.tar.gz -o osv.tar.gz
-          tar -xzf osv.tar.gz
-          chmod +x osv-scanner
-          sudo mv osv-scanner /usr/local/bin/
-          echo "✅ OSV Scanner installed at $(which osv-scanner)"
+          curl -sSL https://github.com/google/osv-scanner/releases/download/v1.6.2/osv-scanner_1.6.2_linux_amd64.deb -o osv.deb
+          sudo dpkg -i osv.deb
+          echo "✅ OSV Scanner installed at: $(which osv-scanner)"
           osv-scanner --version
 
       - name: Scan Python dependencies
         continue-on-error: true
         run: |
           if [ -f requirements.txt ]; then
-            echo "🔍 Scanning Python requirements.txt..."
             osv-scanner --lockfile=requirements.txt > "${SNAPSHOT_DIR}/osv-python.txt"
-          else
-            echo "ℹ️ No requirements.txt found"
           fi
 
       - name: Scan Java dependencies
         continue-on-error: true
         run: |
           if [ -f pom.xml ]; then
-            echo "🔍 Scanning Java pom.xml..."
             osv-scanner --lockfile=pom.xml > "${SNAPSHOT_DIR}/osv-java.txt"
-          else
-            echo "ℹ️ No pom.xml found"
           fi
 
       - name: Scan Node.js dependencies
         continue-on-error: true
         run: |
           if [ -f package-lock.json ]; then
-            echo "🔍 Scanning Node.js package-lock.json..."
             osv-scanner --lockfile=package-lock.json > "${SNAPSHOT_DIR}/osv-node.txt"
-          else
-            echo "ℹ️ No package-lock.json found"
           fi
 
-      - name: Print Vulnerability Summary
+      - name: Print Summary
         run: |
-          echo "📋 Vulnerability Scan Summary:"
+          echo "📋 Scan Summary:"
           for file in ${SNAPSHOT_DIR}/*.txt; do
             echo "--- $file ---"
-            head -n 10 "$file" || echo "(empty)"
+            head -n 10 "$file"
           done
 
       - name: Show Snapshot Tree
         run: |
-          echo "🗂 Snapshot Directory Tree:"
-          tree .security-snapshots || echo "(tree not available)"
+          tree .security-snapshots || echo "No tree available"
