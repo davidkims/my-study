@@ -1,0 +1,51 @@
+name: Disable all workflows
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  disable-workflows:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Create new branch
+        run: |
+          BRANCH_NAME="disable-workflows-$(date +'%Y%m%d-%H%M%S')"
+          git checkout -b "$BRANCH_NAME"
+          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
+
+      - name: Comment out 'on:' triggers in all workflow files
+        run: |
+          find .github/workflows -type f -name "*.yml" -print0 | while IFS= read -r -d '' file; do
+            sed -i 's/^on:/# on:/' "$file"
+            echo "🔧 Disabled workflow: $file"
+          done
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows
+          git commit -m "🔒 Disable all workflows by commenting out 'on:' blocks"
+          git push origin HEAD:$BRANCH_NAME
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "🔒 Disable all workflows by commenting out 'on:'"
+          title: "🔒 Disable all GitHub Actions workflows"
+          body: |
+            This PR disables all workflows by commenting out their `on:` triggers.
+            Please review and merge if appropriate.
+          branch: ${{ env.BRANCH_NAME }}
