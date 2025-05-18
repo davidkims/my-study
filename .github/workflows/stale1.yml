@@ -1,4 +1,4 @@
-name: Disable all workflows
+name: Disable All Workflows and Create PR
 
 on:
   workflow_dispatch:
@@ -18,17 +18,17 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Create new branch
+      - name: Create branch
         run: |
           BRANCH_NAME="disable-workflows-$(date +'%Y%m%d-%H%M%S')"
           git checkout -b "$BRANCH_NAME"
           echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
 
-      - name: Comment out 'on:' triggers in all workflow files
+      - name: Comment out all 'on:' triggers in workflows
         run: |
           find .github/workflows -type f -name "*.yml" -print0 | while IFS= read -r -d '' file; do
             sed -i 's/^on:/# on:/' "$file"
-            echo "🔧 Disabled workflow: $file"
+            echo "🔒 Disabled workflow trigger in $file"
           done
 
       - name: Commit changes
@@ -36,16 +36,21 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add .github/workflows
-          git commit -m "🔒 Disable all workflows by commenting out 'on:' blocks"
-          git push origin HEAD:$BRANCH_NAME
+          git commit -m "🔒 Disable all workflows by commenting out 'on:' blocks" || echo "Nothing to commit"
+
+      - name: Push branch with PAT
+        env:
+          TOKEN: ${{ secrets.PERSONAL_TOKEN }}
+        run: |
+          git push https://x-access-token:${TOKEN}@github.com/${{ github.repository }} HEAD:${{ env.BRANCH_NAME }}
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v6
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "🔒 Disable all workflows by commenting out 'on:'"
+          token: ${{ secrets.PERSONAL_TOKEN }}
+          commit-message: "🔒 Disable all workflows"
           title: "🔒 Disable all GitHub Actions workflows"
           body: |
             This PR disables all workflows by commenting out their `on:` triggers.
-            Please review and merge if appropriate.
+            Review and merge to prevent further automatic workflow executions.
           branch: ${{ env.BRANCH_NAME }}
