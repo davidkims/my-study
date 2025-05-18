@@ -1,4 +1,4 @@
-name: Setup Multi-language Dev Environments with Slot Management
+name: Install Multi-language Environments with Slot Management
 
 on:
   workflow_dispatch:
@@ -7,18 +7,18 @@ permissions:
   contents: read
 
 jobs:
-  install-languages:
+  setup-environments:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Create timestamped install slot
+      - name: Create install slot directory
         id: slot
         run: |
           TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
           SLOT_DIR=".install/slot-${TIMESTAMP}"
           mkdir -p "$SLOT_DIR"
           echo "SLOT_DIR=$SLOT_DIR" >> $GITHUB_ENV
-          echo "📦 Created install slot: $SLOT_DIR"
+          echo "📦 Created slot: $SLOT_DIR"
 
       - name: Install Java (Temurin 17)
         run: |
@@ -49,34 +49,40 @@ jobs:
           python3.11 --version | tee "${SLOT_DIR}/python/version.txt"
           which python3.11
 
-      - name: Install Oracle SQL Instant Client (Basic)
+      - name: Install Oracle SQL Instant Client (Basic 21.9)
         run: |
           sudo apt-get install -y libaio-dev unzip curl
           mkdir -p "${SLOT_DIR}/oracle"
-          curl -L -o instantclient-basic.zip "https://download.oracle.com/otn_software/linux/instantclient/instantclient-basic-linux.x64-21.9.0.0.0dbru.zip"
-          unzip instantclient-basic.zip -d "${SLOT_DIR}/oracle"
+          ORACLE_URL="https://download.oracle.com/otn_software/linux/instantclient/219000/instantclient-basic-linux.x64-21.9.0.0.0dbru.zip"
+          echo "📥 Downloading Oracle Instant Client..."
+          curl -L --retry 3 --retry-delay 5 \
+               -H "Cookie: oraclelicense=accept-securebackup-cookie" \
+               -o instantclient-basic.zip "$ORACLE_URL"
+          echo "📦 Extracting..."
+          unzip -q instantclient-basic.zip -d "${SLOT_DIR}/oracle"
           chmod -R 755 "${SLOT_DIR}/oracle"
           echo "${SLOT_DIR}/oracle/instantclient_21_9" >> $GITHUB_PATH
+          echo "✅ Oracle Client Installed:"
           ls -l "${SLOT_DIR}/oracle"
 
-      - name: Verify installations using ps -ef and version checks
+      - name: Verify Installed Tools with ps -ef
         run: |
-          echo "🧪 Checking processes and versions:"
-          echo "Java:"
+          echo "🔍 Process Check"
           ps -ef | grep java || echo "Java process not running (expected)"
-          echo "C Compiler:"
           ps -ef | grep gcc || echo "GCC process not running"
-          echo "Python:"
-          ps -ef | grep python3.11 || echo "Python 3.11 process not running"
-          echo "Oracle:"
-          ps -ef | grep sqlplus || echo "Oracle SQLPlus not running (expected)"
+          ps -ef | grep python3.11 || echo "Python 3.11 not running"
+          ps -ef | grep sqlplus || echo "Oracle SQLPlus not running"
 
-          echo "📦 Installed versions:"
+      - name: Check Installed Versions
+        run: |
+          echo "📦 Java Version:"
           "${SLOT_DIR}/java/bin/java" -version
+          echo "📦 GCC Version:"
           gcc --version
+          echo "📦 Python Version:"
           python3.11 --version
 
-      - name: Show disk usage of install slot
+      - name: Check Disk Usage of Install Slot
         run: |
-          echo "💾 Disk usage per install slot:"
+          echo "💽 Disk Usage:"
           du -sh .install/*
