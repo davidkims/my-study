@@ -1,44 +1,62 @@
-name: Analyze Workflow History
+name: Re-run Failed Workflows (Auto Retry)
 
 on:
   workflow_dispatch:
 
 permissions:
-  actions: read
+  actions: write
   contents: read
 
 jobs:
-  analyze-runs:
+  rerun-failed:
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
 
+    steps:
       - name: Install jq
         run: sudo apt-get install -y jq
 
-      - name: Fetch latest workflow runs (last 100)
-        id: fetch
+      - name: Fetch last 100 workflow runs
         run: |
+          echo "📥 Fetching workflow runs..."
           curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/runs?per_page=100" \
-            -o runs.json
+               -H "Accept: application/vnd.github+json" \
+               "https://api.github.com/repos/${{ github.repository }}/actions/runs?per_page=100" \
+               -o runs.json
 
-          jq '.workflow_runs[] | {id, name, status, conclusion, created_at, html_url}' runs.json > summary.json
-          echo "✅ Run summary saved to summary.json"
+          echo "✅ Saved to runs.json"
+          cat runs.json | jq '.workflow_runs[] | {id, name, conclusion, html_url}' > filtered.json
 
-      - name: Show failed runs
+      - name: List failed workflows
+        id: list_failed
         run: |
-          echo "🔍 Failed workflows (if any):"
-          jq -c 'select(.conclusion == "failure")' summary.json || echo "✅ No failed runs."
+          echo "🔍 Identifying failed runs..."
+          FAILED_IDS=$(jq -r 'select(.conclusion == "failure") | .id' filtered.json)
 
-      - name: Highlight CodeQL failures
-        run: |
-          echo "🛡️ CodeQL specific failures:"
-          jq -c 'select(.name | test("CodeQL.*")) | select(.conclusion != "success")' summary.json || echo "✅ All CodeQL runs passed."
+          if [ -z "$FAILED_IDS" ]; then
+            echo "✅ No failed runs to re-run."
+            echo "has_failures=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
 
-      - name: Print summary table
+          echo "$FAILED_IDS" > failed_ids.txt
+          echo "has_failures=true" >> $GITHUB_OUTPUT
+
+          echo "❗ Failed Run IDs:"
+          cat failed_ids.txt
+
+      - name: Re-run failed workflows
+        if: steps.list_failed.outputs.has_failures == 'true'
         run: |
-          echo "📋 Workflow Execution Summary (last 100):"
-          jq -r '[.created_at, .name, .status, .conclusion, .html_url] | @tsv' summary.json | column -t -s $'\t'
+          echo "🔁 Re-running failed workflows..."
+          while read -r ID; do
+            echo "🔁 Re-running run ID: $ID"
+            curl -s -X POST \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runs/${ID}/rerun"
+
+            echo "🕒 Waiting briefly between reruns..."
+            sleep 2
+          done < failed_ids.txt
+
+          echo "✅ All failed workflows re-triggered."
