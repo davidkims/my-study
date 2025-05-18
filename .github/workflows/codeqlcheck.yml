@@ -1,0 +1,44 @@
+name: Analyze Workflow History
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  analyze-runs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Fetch latest workflow runs (last 100)
+        id: fetch
+        run: |
+          curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs?per_page=100" \
+            -o runs.json
+
+          jq '.workflow_runs[] | {id, name, status, conclusion, created_at, html_url}' runs.json > summary.json
+          echo "✅ Run summary saved to summary.json"
+
+      - name: Show failed runs
+        run: |
+          echo "🔍 Failed workflows (if any):"
+          jq -c 'select(.conclusion == "failure")' summary.json || echo "✅ No failed runs."
+
+      - name: Highlight CodeQL failures
+        run: |
+          echo "🛡️ CodeQL specific failures:"
+          jq -c 'select(.name | test("CodeQL.*")) | select(.conclusion != "success")' summary.json || echo "✅ All CodeQL runs passed."
+
+      - name: Print summary table
+        run: |
+          echo "📋 Workflow Execution Summary (last 100):"
+          jq -r '[.created_at, .name, .status, .conclusion, .html_url] | @tsv' summary.json | column -t -s $'\t'
