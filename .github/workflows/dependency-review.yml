@@ -2,7 +2,7 @@ name: Hourly Vulnerability Snapshot with OSV Scanner
 
 on:
   schedule:
-    - cron: '0 * * * *'  # 매 시간 정각마다 실행
+    - cron: '0 * * * *'  # 매 시간 정각 실행
   workflow_dispatch:
 
 permissions:
@@ -25,18 +25,20 @@ jobs:
           echo "SNAPSHOT_DIR=$SNAPSHOT_DIR" >> $GITHUB_ENV
           echo "📸 Snapshot path: $SNAPSHOT_DIR"
 
-      - name: Install OSV Scanner (v1.6.2)
+      - name: Install OSV Scanner (v1.6.2 from tar.gz)
         run: |
-          curl -sSfL https://github.com/google/osv-scanner/releases/download/v1.6.2/osv-scanner-linux-amd64 -o osv-scanner
+          curl -sSL https://github.com/google/osv-scanner/releases/download/v1.6.2/osv-scanner_1.6.2_linux_amd64.tar.gz -o osv.tar.gz
+          tar -xzf osv.tar.gz
           chmod +x osv-scanner
           sudo mv osv-scanner /usr/local/bin/
           echo "✅ OSV Scanner installed at $(which osv-scanner)"
+          osv-scanner --version
 
       - name: Scan Python dependencies
         continue-on-error: true
         run: |
           if [ -f requirements.txt ]; then
-            echo "🔍 Scanning Python requirements..."
+            echo "🔍 Scanning Python requirements.txt..."
             osv-scanner --lockfile=requirements.txt > "${SNAPSHOT_DIR}/osv-python.txt"
           else
             echo "ℹ️ No requirements.txt found"
@@ -62,11 +64,11 @@ jobs:
             echo "ℹ️ No package-lock.json found"
           fi
 
-      - name: Print Summary
+      - name: Print Vulnerability Summary
         run: |
           echo "📋 Vulnerability Scan Summary:"
           for file in ${SNAPSHOT_DIR}/*.txt; do
-            echo "--- ${file} ---"
+            echo "--- $file ---"
             head -n 10 "$file" || echo "(empty)"
           done
 
