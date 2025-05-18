@@ -1,58 +1,67 @@
-name: Security Monitoring Snapshot
+name: Hourly Vulnerability Scan Snapshot
 
 on:
   schedule:
-    - cron: '0 * * * *'  # 매 시간 정각에 실행
+    - cron: '0 * * * *'  # 매시간 정각마다 실행
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
-  security-check:
-    name: Dependency & Vulnerability Snapshot
+  osv-scan:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Prepare snapshot directory
+      - name: Create Snapshot Directory
         id: snapshot
         run: |
           TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
           SNAPSHOT_DIR=".security-snapshots/slot-${TIMESTAMP}"
           mkdir -p "$SNAPSHOT_DIR"
           echo "SNAPSHOT_DIR=$SNAPSHOT_DIR" >> $GITHUB_ENV
-          echo "📸 Snapshot path: $SNAPSHOT_DIR"
+          echo "📸 Snapshot directory: $SNAPSHOT_DIR"
 
-      - name: Dependency Review (Auto-Scan Mode)
-        id: depcheck
-        uses: actions/dependency-review-action@v4
-        with:
-          comment-summary-in-pr: never
-          fail-on-severity: moderate
-        continue-on-error: true
-
-      - name: Save snapshot if vulnerabilities detected
-        if: steps.depcheck.outcome == 'failure'
+      - name: Install OSV Scanner
         run: |
-          echo "🚨 Vulnerabilities detected during dependency scan."
-          echo "Saving snapshot report..."
-          echo "Time: $(date)" > "${SNAPSHOT_DIR}/report.txt"
-          echo "Workflow: Dependency Review" >> "${SNAPSHOT_DIR}/report.txt"
-          echo "Severity: Moderate or higher" >> "${SNAPSHOT_DIR}/report.txt"
-          echo "Commit: $GITHUB_SHA" >> "${SNAPSHOT_DIR}/report.txt"
-          echo "URL: https://github.com/${{ github.repository }}/commit/${GITHUB_SHA}" >> "${SNAPSHOT_DIR}/report.txt"
-          echo "Snapshot stored at ${SNAPSHOT_DIR}"
-          tree .security-snapshots || true
+          curl -sSfL https://github.com/google/osv-scanner/releases/download/v1.5.0/osv-scanner-linux-amd64 -o osv-scanner
+          chmod +x osv-scanner
+          sudo mv osv-scanner /usr/local/bin/
+
+      - name: Scan Python dependencies (requirements.txt)
+        run: |
+          if [ -f requirements.txt ]; then
+            osv-scanner --lockfile=requirements.txt > "${SNAPSHOT_DIR}/osv-python.txt" || true
+          else
+            echo "No requirements.txt found"
+          fi
+
+      - name: Scan Java dependencies (pom.xml)
+        run: |
+          if [ -f pom.xml ]; then
+            osv-scanner --lockfile=pom.xml > "${SNAPSHOT_DIR}/osv-java.txt" || true
+          else
+            echo "No pom.xml found"
+          fi
+
+      - name: Scan Node.js dependencies (package-lock.json)
+        run: |
+          if [ -f package-lock.json ]; then
+            osv-scanner --lockfile=package-lock.json > "${SNAPSHOT_DIR}/osv-node.txt" || true
+          else
+            echo "No package-lock.json found"
+          fi
 
       - name: Print Summary
         run: |
-          echo "🔍 Dependency Review Result: ${{ steps.depcheck.outcome }}"
-          if [ "${{ steps.depcheck.outcome }}" == "failure" ]; then
-            echo "❗ Issues found. See snapshot under: $SNAPSHOT_DIR"
-          else
-            echo "✅ No vulnerabilities found."
-          fi
+          echo "📋 Vulnerability Scan Summary:"
+          for file in ${SNAPSHOT_DIR}/*.txt; do
+            echo "--- ${file} ---"
+            cat "$file" | head -n 10
+          done
+
+      - name: Show Snapshot Directory
+        run: tree .security-snapshots || true
