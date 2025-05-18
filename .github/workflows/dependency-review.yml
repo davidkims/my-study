@@ -1,0 +1,58 @@
+name: Security Monitoring Snapshot
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # 매 시간 정각에 실행
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  security-check:
+    name: Dependency & Vulnerability Snapshot
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare snapshot directory
+        id: snapshot
+        run: |
+          TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
+          SNAPSHOT_DIR=".security-snapshots/slot-${TIMESTAMP}"
+          mkdir -p "$SNAPSHOT_DIR"
+          echo "SNAPSHOT_DIR=$SNAPSHOT_DIR" >> $GITHUB_ENV
+          echo "📸 Snapshot path: $SNAPSHOT_DIR"
+
+      - name: Dependency Review (Auto-Scan Mode)
+        id: depcheck
+        uses: actions/dependency-review-action@v4
+        with:
+          comment-summary-in-pr: never
+          fail-on-severity: moderate
+        continue-on-error: true
+
+      - name: Save snapshot if vulnerabilities detected
+        if: steps.depcheck.outcome == 'failure'
+        run: |
+          echo "🚨 Vulnerabilities detected during dependency scan."
+          echo "Saving snapshot report..."
+          echo "Time: $(date)" > "${SNAPSHOT_DIR}/report.txt"
+          echo "Workflow: Dependency Review" >> "${SNAPSHOT_DIR}/report.txt"
+          echo "Severity: Moderate or higher" >> "${SNAPSHOT_DIR}/report.txt"
+          echo "Commit: $GITHUB_SHA" >> "${SNAPSHOT_DIR}/report.txt"
+          echo "URL: https://github.com/${{ github.repository }}/commit/${GITHUB_SHA}" >> "${SNAPSHOT_DIR}/report.txt"
+          echo "Snapshot stored at ${SNAPSHOT_DIR}"
+          tree .security-snapshots || true
+
+      - name: Print Summary
+        run: |
+          echo "🔍 Dependency Review Result: ${{ steps.depcheck.outcome }}"
+          if [ "${{ steps.depcheck.outcome }}" == "failure" ]; then
+            echo "❗ Issues found. See snapshot under: $SNAPSHOT_DIR"
+          else
+            echo "✅ No vulnerabilities found."
+          fi
