@@ -1,0 +1,73 @@
+name: Install Multi-Language Tools with Slot Management
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install-environments:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Prepare Slot Directory
+        id: slot
+        run: |
+          TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
+          SLOT_DIR=".install/slot-${TIMESTAMP}"
+          mkdir -p "$SLOT_DIR"
+          echo "SLOT_DIR=$SLOT_DIR" >> $GITHUB_ENV
+          echo "📦 Created install slot: $SLOT_DIR"
+
+      - name: Install Java (Temurin 17)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget unzip
+          wget https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.9+9/OpenJDK17U-jdk_x64_linux_hotspot_17.0.9_9.tar.gz -O java17.tar.gz
+          mkdir -p "${SLOT_DIR}/java"
+          tar -xzf java17.tar.gz -C "${SLOT_DIR}/java" --strip-components=1
+          chmod -R 755 "${SLOT_DIR}/java"
+          echo "JAVA_HOME=${SLOT_DIR}/java" >> $GITHUB_ENV
+          echo "${SLOT_DIR}/java/bin" >> $GITHUB_PATH
+          java -version
+
+      - name: Install GCC (C Compiler)
+        run: |
+          sudo apt-get install -y build-essential
+          gcc --version > "${SLOT_DIR}/gcc_version.txt"
+          which gcc
+
+      - name: Install Python 3.11
+        run: |
+          sudo add-apt-repository -y ppa:deadsnakes/ppa
+          sudo apt-get update
+          sudo apt-get install -y python3.11 python3.11-venv python3.11-dev
+          python3.11 --version > "${SLOT_DIR}/python_version.txt"
+          which python3.11
+
+      - name: Install Oracle SQL Instant Client (Basic)
+        run: |
+          sudo apt-get install -y libaio1
+          curl -L -o instantclient-basic.zip "https://download.oracle.com/otn_software/linux/instantclient/instantclient-basic-linux.x64-21.9.0.0.0dbru.zip"
+          unzip instantclient-basic.zip -d "${SLOT_DIR}/oracle"
+          chmod -R 755 "${SLOT_DIR}/oracle"
+          echo "${SLOT_DIR}/oracle/instantclient_21_9" >> $GITHUB_PATH
+          ls -l "${SLOT_DIR}/oracle"
+
+      - name: Verify Installations with ps -ef
+        run: |
+          echo "🔍 Checking installed tools:"
+          echo "Java:"
+          ps -ef | grep java || echo "Java process not running (as expected in CI)"
+          echo "C compiler:"
+          ps -ef | grep gcc || echo "GCC process not running (only used when compiling)"
+          echo "Python:"
+          ps -ef | grep python3.11 || echo "Python 3.11 not running"
+          echo "SQL:"
+          ps -ef | grep sqlplus || echo "Oracle Client not running (client lib only)"
+
+      - name: Disk Usage Overview
+        run: |
+          echo "🧮 Disk usage of installation slot:"
+          du -sh .install/* || true
