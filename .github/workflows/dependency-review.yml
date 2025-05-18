@@ -1,8 +1,8 @@
-name: Hourly Vulnerability Snapshot (OSV Scanner v1.4.3)
+name: OSV Scanner Snapshot (v1.3.2 Verified Binary)
 
 on:
   schedule:
-    - cron: '0 * * * *'  # 매 시간 정각마다 실행
+    - cron: '0 * * * *'  # 매시간 실행
   workflow_dispatch:
 
 permissions:
@@ -23,11 +23,10 @@ jobs:
           SNAPSHOT_DIR=".security-snapshots/slot-${TIMESTAMP}"
           mkdir -p "$SNAPSHOT_DIR"
           echo "SNAPSHOT_DIR=$SNAPSHOT_DIR" >> $GITHUB_ENV
-          echo "📸 Created snapshot at $SNAPSHOT_DIR"
 
-      - name: Install OSV Scanner (v1.4.3 - Verified Binary)
+      - name: Install OSV Scanner (v1.3.2 verified binary)
         run: |
-          curl -sSL https://github.com/google/osv-scanner/releases/download/v1.4.3/osv-scanner-linux-amd64 -o osv-scanner
+          curl -sSL https://github.com/google/osv-scanner/releases/download/v1.3.2/osv-scanner-linux-amd64 -o osv-scanner
           chmod +x osv-scanner
           sudo mv osv-scanner /usr/local/bin/
           echo "✅ Installed OSV Scanner at: $(which osv-scanner)"
@@ -37,41 +36,31 @@ jobs:
         continue-on-error: true
         run: |
           if [ -f requirements.txt ]; then
-            echo "🔍 Scanning Python requirements.txt..."
             osv-scanner --lockfile=requirements.txt > "${SNAPSHOT_DIR}/osv-python.txt"
-          else
-            echo "ℹ️ No requirements.txt found"
           fi
 
       - name: Scan Java dependencies
         continue-on-error: true
         run: |
           if [ -f pom.xml ]; then
-            echo "🔍 Scanning Java pom.xml..."
             osv-scanner --lockfile=pom.xml > "${SNAPSHOT_DIR}/osv-java.txt"
-          else
-            echo "ℹ️ No pom.xml found"
           fi
 
       - name: Scan Node.js dependencies
         continue-on-error: true
         run: |
           if [ -f package-lock.json ]; then
-            echo "🔍 Scanning Node.js package-lock.json..."
             osv-scanner --lockfile=package-lock.json > "${SNAPSHOT_DIR}/osv-node.txt"
-          else
-            echo "ℹ️ No package-lock.json found"
           fi
 
-      - name: Print Vulnerability Scan Summary
+      - name: Print Summary
         run: |
-          echo "📋 Vulnerability Scan Results:"
+          echo "📋 Scan Summary:"
           for file in ${SNAPSHOT_DIR}/*.txt; do
             echo "--- $file ---"
-            head -n 10 "$file" || echo "(empty)"
+            head -n 10 "$file"
           done
 
-      - name: Show Snapshot Directory Tree
+      - name: Show Snapshot Tree
         run: |
-          echo "🗂 Snapshot Directory Structure:"
-          tree .security-snapshots || echo "tree not available"
+          tree .security-snapshots || echo "No snapshot tree available"
