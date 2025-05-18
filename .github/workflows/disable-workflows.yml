@@ -18,36 +18,36 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Create timestamped backup slot
+      - name: Create backup slot directory
         run: |
           TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
-          SLOT_DIR=".github/workflows/.slot-${TIMESTAMP}"
+          SLOT_DIR=".github/.workflow-backups/slot-${TIMESTAMP}"
           mkdir -p "$SLOT_DIR"
           echo "SLOT_DIR=$SLOT_DIR" >> $GITHUB_ENV
-          echo "📦 Backup slot created at $SLOT_DIR"
+          echo "📦 Backup directory: $SLOT_DIR"
 
-      - name: Backup and disable workflow triggers
+      - name: Backup and disable all workflows
         run: |
           for file in .github/workflows/*.yml; do
-            filename=$(basename "$file")
-            cp "$file" "${SLOT_DIR}/${filename}.bak"
+            fname=$(basename "$file")
+            cp "$file" "${SLOT_DIR}/${fname}.bak"
             sed -i 's/^on:/# on:/' "$file"
-            echo "🔒 Disabled trigger in $file"
+            echo "🔒 Disabled workflow trigger in $file"
           done
 
-      - name: Commit changes
+      - name: Commit and create branch
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
+          
           BRANCH_NAME="disable-workflows-$(date +'%Y%m%d-%H%M%S')"
           git checkout -b "$BRANCH_NAME"
 
-          git add .github/workflows
-          git commit -m "🔒 Disable all workflows and backup originals to slot"
+          git add .github
+          git commit -m "🔒 Disable all workflows and backup originals to backup slot"
           echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
 
-      - name: Push changes using PAT
+      - name: Push branch using PAT
         env:
           TOKEN: ${{ secrets.PERSONAL_TOKEN }}
         run: |
@@ -60,7 +60,6 @@ jobs:
           commit-message: "🔒 Disable all workflows"
           title: "🔒 Disable all GitHub Actions workflows"
           body: |
-            All workflow `on:` triggers have been commented out.
-            Backup of original files has been saved under `${{ env.SLOT_DIR }}`.
-            Please review and merge this PR to finalize the deactivation.
+            This PR disables all workflows by commenting out `on:` triggers.
+            A full backup was created at `${{ env.SLOT_DIR }}`.
           branch: ${{ env.BRANCH_NAME }}
