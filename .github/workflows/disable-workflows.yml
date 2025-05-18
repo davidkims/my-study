@@ -18,17 +18,23 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Create backup slot directory
+      - name: Create backup slot
         run: |
           TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
           SLOT_DIR=".github/.workflow-backups/slot-${TIMESTAMP}"
           mkdir -p "$SLOT_DIR"
           echo "SLOT_DIR=$SLOT_DIR" >> $GITHUB_ENV
-          echo "📦 Backup directory: $SLOT_DIR"
+          echo "📦 Created backup directory: $SLOT_DIR"
 
-      - name: Backup and disable all workflows
+      - name: Backup and disable workflows except self
         run: |
           for file in .github/workflows/*.yml; do
+            # 자기 자신은 제외
+            if [[ "$file" == *"disable-workflows.yml" ]]; then
+              echo "🚫 Skipping self: $file"
+              continue
+            fi
+
             fname=$(basename "$file")
             cp "$file" "${SLOT_DIR}/${fname}.bak"
             sed -i 's/^on:/# on:/' "$file"
@@ -39,15 +45,17 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
+
           BRANCH_NAME="disable-workflows-$(date +'%Y%m%d-%H%M%S')"
           git checkout -b "$BRANCH_NAME"
 
-          git add .github
-          git commit -m "🔒 Disable all workflows and backup originals to backup slot"
+          # 자기 자신 제외하고 add
+          find .github/workflows -type f -name '*.yml' ! -name 'disable-workflows.yml' -exec git add {} \;
+          git add .github/.workflow-backups
+          git commit -m "🔒 Disable workflows and backup originals"
           echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
 
-      - name: Push branch using PAT
+      - name: Push using PAT
         env:
           TOKEN: ${{ secrets.PERSONAL_TOKEN }}
         run: |
@@ -57,9 +65,9 @@ jobs:
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.PERSONAL_TOKEN }}
-          commit-message: "🔒 Disable all workflows"
-          title: "🔒 Disable all GitHub Actions workflows"
+          commit-message: "🔒 Disable workflows (excluding this one)"
+          title: "🔒 Disable GitHub Actions workflows (auto)"
           body: |
-            This PR disables all workflows by commenting out `on:` triggers.
-            A full backup was created at `${{ env.SLOT_DIR }}`.
+            All workflows (except this runner itself) have been disabled by commenting out their `on:` triggers.
+            Backups were stored at `${{ env.SLOT_DIR }}`.
           branch: ${{ env.BRANCH_NAME }}
