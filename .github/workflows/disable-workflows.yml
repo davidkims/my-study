@@ -1,4 +1,4 @@
-name: Disable All Workflows with PR
+name: Disable All Workflows with Backup & PR
 
 on:
   workflow_dispatch:
@@ -18,56 +18,66 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Create backup slot
+      - name: Create backup directory
+        id: backup
         run: |
           TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
           SLOT_DIR=".github/.workflow-backups/slot-${TIMESTAMP}"
           mkdir -p "$SLOT_DIR"
-          echo "SLOT_DIR=$SLOT_DIR" >> $GITHUB_ENV
-          echo "📦 Created backup directory: $SLOT_DIR"
+          echo "slot_dir=$SLOT_DIR" >> $GITHUB_OUTPUT
+          echo "📦 Created backup slot: $SLOT_DIR"
 
-      - name: Backup and disable workflows except self
+      - name: Disable workflows and backup (skip self)
+        id: disable
         run: |
+          COUNT=0
           for file in .github/workflows/*.yml; do
-            # 자기 자신은 제외
-            if [[ "$file" == *"disable-workflows.yml" ]]; then
+            if [[ "$(basename "$file")" == "disable-workflows.yml" ]]; then
               echo "🚫 Skipping self: $file"
               continue
             fi
 
-            fname=$(basename "$file")
-            cp "$file" "${SLOT_DIR}/${fname}.bak"
+            grep -q '^on:' "$file" || continue  # skip if no 'on:' line
+
+            cp "$file" "${{ steps.backup.outputs.slot_dir }}/$(basename "$file").bak"
             sed -i 's/^on:/# on:/' "$file"
-            echo "🔒 Disabled workflow trigger in $file"
+            echo "🔒 Disabled: $file"
+            COUNT=$((COUNT+1))
           done
 
-      - name: Commit and create branch
+          echo "modified_count=$COUNT" >> $GITHUB_OUTPUT
+
+      - name: Commit changes (only if any file modified)
+        id: commit
+        if: steps.disable.outputs.modified_count != '0'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           BRANCH_NAME="disable-workflows-$(date +'%Y%m%d-%H%M%S')"
           git checkout -b "$BRANCH_NAME"
+          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
 
-          # 자기 자신 제외하고 add
           find .github/workflows -type f -name '*.yml' ! -name 'disable-workflows.yml' -exec git add {} \;
-          git add .github/.workflow-backups
-          git commit -m "🔒 Disable workflows and backup originals"
-          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
+          git add ${{ steps.backup.outputs.slot_dir }}
 
-      - name: Push using PAT
+          git diff --cached --quiet && echo "ℹ️ No actual changes to commit." || git commit -m "🔒 Disable workflows and backup originals"
+
+      - name: Push changes (only if committed)
+        if: steps.disable.outputs.modified_count != '0'
         env:
           TOKEN: ${{ secrets.PERSONAL_TOKEN }}
         run: |
-          git push https://x-access-token:${TOKEN}@github.com/${{ github.repository }} HEAD:${{ env.BRANCH_NAME }}
+          git push https://x-access-token:${TOKEN}@github.com/${{ github.repository }} HEAD:${{ steps.commit.outputs.branch_name }}
 
-      - name: Create Pull Request
+      - name: Create Pull Request (only if changes exist)
+        if: steps.disable.outputs.modified_count != '0'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.PERSONAL_TOKEN }}
-          commit-message: "🔒 Disable workflows (excluding this one)"
-          title: "🔒 Disable GitHub Actions workflows (auto)"
+          commit-message: "🔒 Disable workflows"
+          title: "🔒 Auto-disable GitHub Actions workflows"
           body: |
-            All workflows (except this runner itself) have been disabled by commenting out their `on:` triggers.
-            Backups were stored at `${{ env.SLOT_DIR }}`.
-          branch: ${{ env.BRANCH_NAME }}
+            All workflows (except this one) have had their `on:` triggers commented out.
+            A backup has been saved to `${{ steps.backup.outputs.slot_dir }}`.
+          branch: ${{ steps.commit.outputs.branch_name }}
