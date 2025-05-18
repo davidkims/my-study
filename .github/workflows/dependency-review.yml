@@ -2,7 +2,7 @@ name: OSV Scanner Snapshot via Go Build
 
 on:
   schedule:
-    - cron: '0 * * * *'  # 매 시간 실행
+    - cron: '0 * * * *'  # 매시간 실행
   workflow_dispatch:
 
 permissions:
@@ -29,7 +29,7 @@ jobs:
         with:
           go-version: '1.21'
 
-      - name: Install OSV Scanner (Build from Source)
+      - name: Install OSV Scanner from Source (latest)
         run: |
           go install github.com/google/osv-scanner/cmd/osv-scanner@latest
           echo "✅ Installed OSV Scanner: $(which osv-scanner)"
@@ -40,6 +40,8 @@ jobs:
         run: |
           if [ -f requirements.txt ]; then
             osv-scanner --lockfile=requirements.txt > "${SNAPSHOT_DIR}/osv-python.txt"
+          else
+            echo "ℹ️ No requirements.txt found"
           fi
 
       - name: Scan Java dependencies
@@ -47,6 +49,8 @@ jobs:
         run: |
           if [ -f pom.xml ]; then
             osv-scanner --lockfile=pom.xml > "${SNAPSHOT_DIR}/osv-java.txt"
+          else
+            echo "ℹ️ No pom.xml found"
           fi
 
       - name: Scan Node.js dependencies
@@ -54,16 +58,23 @@ jobs:
         run: |
           if [ -f package-lock.json ]; then
             osv-scanner --lockfile=package-lock.json > "${SNAPSHOT_DIR}/osv-node.txt"
+          else
+            echo "ℹ️ No package-lock.json found"
           fi
 
-      - name: Print Summary
+      - name: Print Summary Safely
         run: |
           echo "📋 Scan Summary:"
-          for file in ${SNAPSHOT_DIR}/*.txt; do
-            echo "--- $file ---"
-            head -n 10 "$file"
-          done
+          if compgen -G "${SNAPSHOT_DIR}/*.txt" > /dev/null; then
+            for file in ${SNAPSHOT_DIR}/*.txt; do
+              echo "--- $file ---"
+              head -n 10 "$file"
+            done
+          else
+            echo "⚠️ No scan result files found in ${SNAPSHOT_DIR}"
+          fi
 
       - name: Show Snapshot Tree
         run: |
-          tree .security-snapshots || echo "No snapshot tree available"
+          echo "🗂 Snapshot Directory Tree:"
+          tree .security-snapshots || echo "(tree command not available)"
