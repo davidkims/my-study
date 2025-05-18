@@ -1,0 +1,34 @@
+name: Manual Delete Workflows
+
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: 'Trigger initiator'
+        default: 'World'
+        required: true
+        type: string
+
+jobs:
+  delete-workflows:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show message
+        run: echo "Hello ${{ inputs.name }}. Starting deletion of .github/workflows..."
+
+      - name: Delete all files in .github/workflows
+        run: |
+          rm -rf .github/workflows/*
+          echo "✅ All files in .github/workflows deleted."
+
+      - name: Commit and push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows
+          git commit -m "🚮 Delete all workflow files via GitHub Action"
+          git push
