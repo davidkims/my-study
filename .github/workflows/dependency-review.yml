@@ -1,8 +1,8 @@
-name: OSV Scanner Snapshot (v1.3.2 Verified Binary)
+name: OSV Scanner Snapshot via Go Build
 
 on:
   schedule:
-    - cron: '0 * * * *'  # 매시간 실행
+    - cron: '0 * * * *'  # 매 시간 실행
   workflow_dispatch:
 
 permissions:
@@ -24,12 +24,15 @@ jobs:
           mkdir -p "$SNAPSHOT_DIR"
           echo "SNAPSHOT_DIR=$SNAPSHOT_DIR" >> $GITHUB_ENV
 
-      - name: Install OSV Scanner (v1.3.2 verified binary)
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install OSV Scanner (Build from Source)
         run: |
-          curl -sSL https://github.com/google/osv-scanner/releases/download/v1.3.2/osv-scanner-linux-amd64 -o osv-scanner
-          chmod +x osv-scanner
-          sudo mv osv-scanner /usr/local/bin/
-          echo "✅ Installed OSV Scanner at: $(which osv-scanner)"
+          go install github.com/google/osv-scanner/cmd/osv-scanner@latest
+          echo "✅ Installed OSV Scanner: $(which osv-scanner)"
           osv-scanner --version
 
       - name: Scan Python dependencies
