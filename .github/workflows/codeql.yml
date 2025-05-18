@@ -1,4 +1,4 @@
-name: Install Multi-Language Tools with Slot Management
+name: Setup Multi-language Dev Environments with Slot Management
 
 on:
   workflow_dispatch:
@@ -7,11 +7,11 @@ permissions:
   contents: read
 
 jobs:
-  install-environments:
+  install-languages:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Prepare Slot Directory
+      - name: Create timestamped install slot
         id: slot
         run: |
           TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
@@ -30,12 +30,14 @@ jobs:
           chmod -R 755 "${SLOT_DIR}/java"
           echo "JAVA_HOME=${SLOT_DIR}/java" >> $GITHUB_ENV
           echo "${SLOT_DIR}/java/bin" >> $GITHUB_PATH
-          java -version
+          echo "✅ Java Installed:"
+          "${SLOT_DIR}/java/bin/java" -version
 
-      - name: Install GCC (C Compiler)
+      - name: Install GCC (C compiler)
         run: |
           sudo apt-get install -y build-essential
-          gcc --version > "${SLOT_DIR}/gcc_version.txt"
+          mkdir -p "${SLOT_DIR}/gcc"
+          gcc --version | tee "${SLOT_DIR}/gcc/version.txt"
           which gcc
 
       - name: Install Python 3.11
@@ -43,31 +45,38 @@ jobs:
           sudo add-apt-repository -y ppa:deadsnakes/ppa
           sudo apt-get update
           sudo apt-get install -y python3.11 python3.11-venv python3.11-dev
-          python3.11 --version > "${SLOT_DIR}/python_version.txt"
+          mkdir -p "${SLOT_DIR}/python"
+          python3.11 --version | tee "${SLOT_DIR}/python/version.txt"
           which python3.11
 
       - name: Install Oracle SQL Instant Client (Basic)
         run: |
-          sudo apt-get install -y libaio1
+          sudo apt-get install -y libaio-dev unzip curl
+          mkdir -p "${SLOT_DIR}/oracle"
           curl -L -o instantclient-basic.zip "https://download.oracle.com/otn_software/linux/instantclient/instantclient-basic-linux.x64-21.9.0.0.0dbru.zip"
           unzip instantclient-basic.zip -d "${SLOT_DIR}/oracle"
           chmod -R 755 "${SLOT_DIR}/oracle"
           echo "${SLOT_DIR}/oracle/instantclient_21_9" >> $GITHUB_PATH
           ls -l "${SLOT_DIR}/oracle"
 
-      - name: Verify Installations with ps -ef
+      - name: Verify installations using ps -ef and version checks
         run: |
-          echo "🔍 Checking installed tools:"
+          echo "🧪 Checking processes and versions:"
           echo "Java:"
-          ps -ef | grep java || echo "Java process not running (as expected in CI)"
-          echo "C compiler:"
-          ps -ef | grep gcc || echo "GCC process not running (only used when compiling)"
+          ps -ef | grep java || echo "Java process not running (expected)"
+          echo "C Compiler:"
+          ps -ef | grep gcc || echo "GCC process not running"
           echo "Python:"
-          ps -ef | grep python3.11 || echo "Python 3.11 not running"
-          echo "SQL:"
-          ps -ef | grep sqlplus || echo "Oracle Client not running (client lib only)"
+          ps -ef | grep python3.11 || echo "Python 3.11 process not running"
+          echo "Oracle:"
+          ps -ef | grep sqlplus || echo "Oracle SQLPlus not running (expected)"
 
-      - name: Disk Usage Overview
+          echo "📦 Installed versions:"
+          "${SLOT_DIR}/java/bin/java" -version
+          gcc --version
+          python3.11 --version
+
+      - name: Show disk usage of install slot
         run: |
-          echo "🧮 Disk usage of installation slot:"
-          du -sh .install/* || true
+          echo "💾 Disk usage per install slot:"
+          du -sh .install/*
