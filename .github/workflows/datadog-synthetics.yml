@@ -21,15 +21,15 @@ jobs:
     - name: 📥 Checkout repository
       uses: actions/checkout@v4
 
-    - name: 🧰 Install dependencies
+    - name: 🧰 Install tools
       run: |
         sudo apt-get update
         sudo apt-get install -y jq curl
 
-    - name: 🔐 Generate Datadog API Key or use Backup
+    - name: 🔐 Generate Datadog API Key or use backup
       id: generate_api_key
       run: |
-        echo "▶️ API Key 생성 시도 중..."
+        echo "▶️ Creating Datadog API key..."
 
         response=$(curl -s -X POST "${DATADOG_API_HOST}/api/v1/api_key" \
           -H "Content-Type: application/json" \
@@ -40,11 +40,12 @@ jobs:
         new_api_key=$(echo "$response" | jq -r '.api_key')
 
         if [[ "$new_api_key" != "null" && "$new_api_key" != "" ]]; then
-          echo "✅ API Key 생성 성공"
+          echo "✅ API Key created"
           echo "::add-mask::$new_api_key"
           echo "DD_API_KEY=${new_api_key}" >> $GITHUB_ENV
         else
-          echo "❌ 생성 실패. Presigned URL에서 백업 키 다운로드..."
+          echo "❌ API Key creation failed. Fetching from backup..."
+
           curl -sSL -o dd_api_key_backup.json "$BACKUP_API_KEY_URL"
 
           if jq -e .api_key dd_api_key_backup.json >/dev/null 2>&1; then
@@ -52,16 +53,16 @@ jobs:
             echo "::add-mask::$backup_api_key"
             echo "DD_API_KEY=${backup_api_key}" >> $GITHUB_ENV
           else
-            echo "🚨 백업 API 키 JSON 파싱 실패"
+            echo "🚨 Backup API key JSON invalid"
             cat dd_api_key_backup.json
             exit 1
           fi
         fi
 
-    - name: 🔐 Generate Datadog App Key or use Backup
+    - name: 🔐 Generate Datadog App Key or use backup
       id: generate_app_key
       run: |
-        echo "▶️ App Key 생성 시도 중..."
+        echo "▶️ Creating Datadog Application key..."
 
         response=$(curl -s -X POST "${DATADOG_API_HOST}/api/v2/application_keys" \
           -H "Content-Type: application/json" \
@@ -72,11 +73,12 @@ jobs:
         new_app_key=$(echo "$response" | jq -r '.data.attributes.key')
 
         if [[ "$new_app_key" != "null" && "$new_app_key" != "" ]]; then
-          echo "✅ App Key 생성 성공"
+          echo "✅ App Key created"
           echo "::add-mask::$new_app_key"
           echo "DD_APP_KEY=${new_app_key}" >> $GITHUB_ENV
         else
-          echo "❌ 생성 실패. Presigned URL에서 백업 키 다운로드..."
+          echo "❌ App Key creation failed. Fetching from backup..."
+
           curl -sSL -o dd_app_key_backup.json "$BACKUP_APP_KEY_URL"
 
           if jq -e .api_key dd_app_key_backup.json >/dev/null 2>&1; then
@@ -84,7 +86,7 @@ jobs:
             echo "::add-mask::$backup_app_key"
             echo "DD_APP_KEY=${backup_app_key}" >> $GITHUB_ENV
           else
-            echo "🚨 백업 App 키 JSON 파싱 실패"
+            echo "🚨 Backup App key JSON invalid"
             cat dd_app_key_backup.json
             exit 1
           fi
@@ -98,11 +100,11 @@ jobs:
         test_search_query: 'tag:e2e-tests'
         tunnel: false
 
-    - name: 🔁 Optional: Rotate/delete created keys (보안 관리용)
+    - name: 🔁 Optional: Rotate/Delete Created Keys (Security Maintenance)
       if: always()
       run: |
-        echo "🔐 생성된 키 회전 또는 삭제는 Datadog API를 통해 수동 또는 자동으로 수행할 수 있습니다."
-        echo "🔗 https://docs.datadoghq.com/api/latest/api-keys/ 참고"
+        echo "🧼 You can rotate or delete keys via Datadog API:"
+        echo "🔗 https://docs.datadoghq.com/api/latest/api-keys/"
 
     - name: ✅ Done
-      run: echo "🎉 Datadog Synthetic 테스트 완료"
+      run: echo "🎉 Datadog Synthetic Test Completed Successfully"
