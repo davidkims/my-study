@@ -1,45 +1,45 @@
-name: Secure Spring Boot with Checkmarx
+name: Full Secure CI with Checkmarx + IBM Server + Disk Slot
 
 on:
   push:
-    branches: ["main"]
-  pull_request:
-    branches: ["main"]
+    branches: [ "main" ]
+  workflow_dispatch:
 
 permissions:
   contents: read
+  actions: write
   security-events: write
-  actions: read
 
 jobs:
-  build-and-scan:
+  full-pipeline:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
+    - name: Checkout Repository
       uses: actions/checkout@v4
 
-    - name: Set up JDK 17
-      uses: actions/setup-java@v3
-      with:
-        distribution: 'temurin'
-        java-version: '17'
-
-    - name: Install PostgreSQL client
-      run: sudo apt-get update && sudo apt-get install -y postgresql-client jq curl file
-
-    - name: Create project directories
+    - name: Set Environment Variables
       run: |
-        mkdir -p springboot-app/src/main/java/com/example/demo
-        mkdir -p springboot-app/src/main/resources
-        mkdir -p sql/init
-        mkdir -p reports/checkmarx
-        echo "✅ 디렉토리 생성 완료"
+        TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
+        echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
+        echo "SLOT_DIR=disk-slot/slot-${TIMESTAMP}" >> $GITHUB_ENV
 
-    - name: Create valid pom.xml and sample App
+    - name: Install Dependencies
       run: |
-        cat <<EOF > springboot-app/pom.xml
-        <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        sudo apt-get update
+        sudo apt-get install -y jq curl unzip file openjdk-17-jdk
+
+    - name: Create Disk Slot Directory
+      run: |
+        mkdir -p $SLOT_DIR/springboot-app
+        mkdir -p $SLOT_DIR/sql/init
+        mkdir -p $SLOT_DIR/reports/checkmarx
+
+    - name: Generate Sample pom.xml and Application.java
+      run: |
+        cat <<EOF > $SLOT_DIR/springboot-app/pom.xml
+        <project xmlns="http://maven.apache.org/POM/4.0.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
           <modelVersion>4.0.0</modelVersion>
           <groupId>com.example</groupId>
@@ -49,7 +49,6 @@ jobs:
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-parent</artifactId>
             <version>2.7.5</version>
-            <relativePath/> <!-- lookup parent from repository -->
           </parent>
           <dependencies>
             <dependency>
@@ -60,7 +59,8 @@ jobs:
         </project>
         EOF
 
-        cat <<EOF > springboot-app/src/main/java/com/example/demo/Application.java
+        mkdir -p $SLOT_DIR/springboot-app/src/main/java/com/example/demo
+        cat <<EOF > $SLOT_DIR/springboot-app/src/main/java/com/example/demo/Application.java
         package com.example.demo;
 
         import org.springframework.boot.SpringApplication;
@@ -68,29 +68,51 @@ jobs:
 
         @SpringBootApplication
         public class Application {
-            public static void main(String[] args) {
-                SpringApplication.run(Application.class, args);
-            }
+          public static void main(String[] args) {
+            SpringApplication.run(Application.class, args);
+          }
         }
         EOF
 
-        echo "CREATE TABLE test (id INT PRIMARY KEY);" > sql/init/schema.sql
+    - name: Generate Checkmarx Token (Manual OAuth2 Sample)
+      run: |
+        echo "⚙️ Getting Checkmarx Access Token..."
+        TOKEN_RESPONSE=$(curl -s -X POST "https://ast.checkmarx.net/auth/realms/checkmarx/protocol/openid-connect/token" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "client_id=${{ secrets.CX_CLIENT_ID }}" \
+          -d "client_secret=${{ secrets.CX_CLIENT_SECRET }}" \
+          -d "grant_type=client_credentials")
+        ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.access_token')
+        echo "::add-mask::$ACCESS_TOKEN"
+        echo "CHECKMARX_ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
 
     - name: Build Spring Boot App
       run: |
-        cd springboot-app
+        cd $SLOT_DIR/springboot-app
         mvn clean install
 
+    - name: Simulate IBM WebSphere Install (Mock Script)
+      run: |
+        echo "📦 Simulating IBM WebSphere Application Server install..."
+        echo "Install completed at $SLOT_DIR/ibm/was" > $SLOT_DIR/ibm_install.log
+        mkdir -p $SLOT_DIR/ibm/was
+
     - name: Run Checkmarx SAST Scan
-      uses: checkmarx/ast-github-action@8e887bb93dacc44e0f5b64ee2b06d5815f89d4fc
+      uses: checkmarx/ast-github-action@v1.0.11
       with:
         base_uri: https://ast.checkmarx.net
         cx_client_id: ${{ secrets.CX_CLIENT_ID }}
         cx_client_secret: ${{ secrets.CX_CLIENT_SECRET }}
         cx_tenant: ${{ secrets.CX_TENANT }}
-        additional_params: --report-format sarif --output-path reports/checkmarx
+        project_name: ${{ github.repository }}
+        branch: main
+        additional_params: --report-format sarif --output-path ${{ env.SLOT_DIR }}/reports/checkmarx
 
-    - name: Upload SARIF Report
+    - name: Upload SARIF Result
       uses: github/codeql-action/upload-sarif@v3
       with:
-        sarif_file: reports/checkmarx/cx_result.sarif
+        sarif_file: ${{ env.SLOT_DIR }}/reports/checkmarx/cx_result.sarif
+
+    - name: Done
+      run: |
+        echo "✅ Pipeline completed in slot: $SLOT_DIR"
