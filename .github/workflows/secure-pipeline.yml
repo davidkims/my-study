@@ -1,8 +1,8 @@
-name: Secure CI - Checkmarx + IBM Setup + Disk Slot
+name: Secure CI - Checkmarx + IBM + DiskSlot
 
 on:
   push:
-    branches: ["main"]
+    branches: [ "main" ]
   workflow_dispatch:
 
 permissions:
@@ -18,25 +18,25 @@ jobs:
     - name: Checkout Source
       uses: actions/checkout@v4
 
-    - name: Set Environment Variables
+    - name: Set Slot Directory with Timestamp
       run: |
         TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
         echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
         echo "SLOT_DIR=disk-slot/slot-${TIMESTAMP}" >> $GITHUB_ENV
 
-    - name: Install Dependencies
+    - name: Install Required Packages
       run: |
         sudo apt-get update
         sudo apt-get install -y jq curl unzip file openjdk-17-jdk
 
     - name: Create Directory Structure
       run: |
-        mkdir -p $SLOT_DIR/springboot-app
+        mkdir -p $SLOT_DIR/springboot-app/src/main/java/com/example/demo
         mkdir -p $SLOT_DIR/sql/init
         mkdir -p $SLOT_DIR/reports/checkmarx
         mkdir -p $SLOT_DIR/ibm/was
 
-    - name: Generate Spring Boot pom.xml & Sample App
+    - name: Generate Spring Boot Project Files
       run: |
         cat <<EOF > $SLOT_DIR/springboot-app/pom.xml
         <project xmlns="http://maven.apache.org/POM/4.0.0"
@@ -60,7 +60,6 @@ jobs:
         </project>
         EOF
 
-        mkdir -p $SLOT_DIR/springboot-app/src/main/java/com/example/demo
         cat <<EOF > $SLOT_DIR/springboot-app/src/main/java/com/example/demo/Application.java
         package com.example.demo;
 
@@ -75,18 +74,18 @@ jobs:
         }
         EOF
 
-    - name: Simulate IBM WebSphere Installation
+    - name: Simulate IBM WAS Installation
       run: |
-        echo "📦 Simulating IBM WebSphere install at $SLOT_DIR/ibm/was..."
-        echo "IBM WebSphere installed on: $(date)" > $SLOT_DIR/ibm/was/install.log
+        echo "Installing IBM WAS to $SLOT_DIR/ibm/was..."
+        echo "WebSphere installed on: $(date)" > $SLOT_DIR/ibm/was/install.log
 
-    - name: Build Spring Boot Project
+    - name: Build Spring Boot App with Maven
       run: |
         cd $SLOT_DIR/springboot-app
         mvn clean install
 
-    - name: Run Checkmarx SAST Scan (v1.0.10)
-      uses: checkmarx/ast-github-action@v1.0.10
+    - name: Run Checkmarx SAST Scan (v2.3.19)
+      uses: Checkmarx/ast-github-action@2.3.19
       with:
         base_uri: https://ast.checkmarx.net
         cx_client_id: ${{ secrets.CX_CLIENT_ID }}
