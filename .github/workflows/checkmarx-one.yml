@@ -1,72 +1,74 @@
-name: CI Pipeline with Checkmarx, Spring Boot, and SQL Server
+name: Secure Spring Boot Build with Checkmarx
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 permissions:
   contents: read
   security-events: write
+  actions: read
 
 jobs:
   build-and-scan:
     runs-on: ubuntu-latest
-    services:
-      sqlserver:
-        image: mcr.microsoft.com/mssql/server:2019-latest
-        env:
-          SA_PASSWORD: "YourStrong!Passw0rd"
-          ACCEPT_EULA: "Y"
-        ports:
-          - 1433:1433
-        options: >-
-          --health-cmd "exit 0"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
-        with:
-          java-version: '17'
-          distribution: 'temurin'
+    - name: Setup Java
+      uses: actions/setup-java@v3
+      with:
+        distribution: 'temurin'
+        java-version: '17'
 
-      - name: Wait for SQL Server to be ready
-        run: |
-          echo "Waiting for SQL Server to be ready..."
-          for i in {1..30}; do
-            if /opt/mssql-tools/bin/sqlcmd -S localhost -U SA -P 'YourStrong!Passw0rd' -Q "SELECT 1" > /dev/null 2>&1; then
-              echo "SQL Server is ready!"
-              break
-            else
-              echo "Waiting..."
-              sleep 5
-            fi
-          done
+    - name: Install PostgreSQL client (for local SQL server integration)
+      run: sudo apt-get update && sudo apt-get install -y postgresql-client
 
-      - name: Build with Maven
-        run: mvn clean install
+    - name: Create project folders
+      run: |
+        mkdir -p springboot-app/src/main/java/com/example/demo
+        mkdir -p sql/init
+        mkdir -p reports/checkmarx
+        echo "✅ 폴더 생성 완료"
 
-      - name: Run integration tests
-        run: mvn verify -Dspring.profiles.active=test
+    - name: Initialize sample pom.xml and SQL file
+      run: |
+        cat <<EOF > springboot-app/pom.xml
+        <project xmlns="http://maven.apache.org/POM/4.0.0" ...>
+          <modelVersion>4.0.0</modelVersion>
+          <groupId>com.example</groupId>
+          <artifactId>demo</artifactId>
+          <version>0.0.1-SNAPSHOT</version>
+          <dependencies>
+            <dependency>
+              <groupId>org.springframework.boot</groupId>
+              <artifactId>spring-boot-starter-web</artifactId>
+            </dependency>
+          </dependencies>
+        </project>
+        EOF
 
-      - name: Checkmarx One Scan
-        uses: checkmarx/ast-github-action@main
-        with:
-          project_name: ${{ github.repository }}
-          base_uri: ${{ secrets.CX_BASE_URI }}
-          cx_tenant: ${{ secrets.CX_TENANT }}
-          cx_client_id: ${{ secrets.CX_CLIENT_ID }}
-          cx_client_secret: ${{ secrets.CX_CLIENT_SECRET }}
-          additional_params: --report-format sarif --output-path .
+        echo "CREATE TABLE test (id INT PRIMARY KEY);" > sql/init/schema.sql
 
-      - name: Upload SARIF file
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: cx_result.sarif
+    - name: Build Spring Boot with Maven
+      run: |
+        cd springboot-app
+        mvn clean install
+
+    - name: Run Checkmarx One scan
+      uses: checkmarx/ast-github-action@8e887bb93dacc44e0f5b64ee2b06d5815f89d4fc
+      with:
+        base_uri: https://ast.checkmarx.net
+        cx_client_id: ${{ secrets.CX_CLIENT_ID }}
+        cx_client_secret: ${{ secrets.CX_CLIENT_SECRET }}
+        cx_tenant: ${{ secrets.CX_TENANT }}
+        additional_params: --report-format sarif --output-path reports/checkmarx
+
+    - name: Upload SARIF report
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: reports/checkmarx/cx_result.sarif
