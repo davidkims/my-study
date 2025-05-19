@@ -1,8 +1,8 @@
-name: Secure CI - Checkmarx + IBM + DiskSlot
+name: Secure CI - Auto Checkmarx Token + Slot Build
 
 on:
   push:
-    branches: ["main"]
+    branches: [ "main" ]
   workflow_dispatch:
 
 permissions:
@@ -11,14 +11,14 @@ permissions:
   security-events: write
 
 jobs:
-  secure-pipeline:
+  checkmarx-scan:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Source
+    - name: Checkout Repository
       uses: actions/checkout@v4
 
-    - name: Set Slot Timestamp
+    - name: Set Disk Slot Timestamp
       run: |
         TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
         echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
@@ -29,76 +29,45 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y jq curl unzip file openjdk-17-jdk
 
-    - name: Create Directory Structure
+    - name: Create Slot Directories
       run: |
-        mkdir -p $SLOT_DIR/springboot-app/src/main/java/com/example/demo
-        mkdir -p $SLOT_DIR/sql/init
         mkdir -p $SLOT_DIR/reports/checkmarx
-        mkdir -p $SLOT_DIR/ibm/was
 
-    - name: Generate Spring Boot Project Files
+    - name: 🔐 Get Checkmarx Access Token Automatically
+      id: cx-auth
       run: |
-        cat <<EOF > $SLOT_DIR/springboot-app/pom.xml
-        <project xmlns="http://maven.apache.org/POM/4.0.0"
-          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
-          <modelVersion>4.0.0</modelVersion>
-          <groupId>com.example</groupId>
-          <artifactId>demo</artifactId>
-          <version>0.0.1-SNAPSHOT</version>
-          <parent>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-parent</artifactId>
-            <version>2.7.5</version>
-          </parent>
-          <dependencies>
-            <dependency>
-              <groupId>org.springframework.boot</groupId>
-              <artifactId>spring-boot-starter-web</artifactId>
-            </dependency>
-          </dependencies>
-        </project>
-        EOF
+        echo "🔑 Requesting Checkmarx Access Token..."
+        TOKEN_RES=$(curl -s -X POST "https://ast.checkmarx.net/auth/realms/checkmarx/protocol/openid-connect/token" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "client_id=${{ secrets.CX_CLIENT_ID }}" \
+          -d "client_secret=${{ secrets.CX_CLIENT_SECRET }}" \
+          -d "grant_type=client_credentials")
 
-        cat <<EOF > $SLOT_DIR/springboot-app/src/main/java/com/example/demo/Application.java
-        package com.example.demo;
+        ACCESS_TOKEN=$(echo "$TOKEN_RES" | jq -r '.access_token')
 
-        import org.springframework.boot.SpringApplication;
-        import org.springframework.boot.autoconfigure.SpringBootApplication;
+        if [[ "$ACCESS_TOKEN" == "null" || -z "$ACCESS_TOKEN" ]]; then
+          echo "❌ Failed to retrieve Checkmarx access token"
+          echo "$TOKEN_RES"
+          exit 1
+        fi
 
-        @SpringBootApplication
-        public class Application {
-          public static void main(String[] args) {
-            SpringApplication.run(Application.class, args);
-          }
-        }
-        EOF
+        echo "::add-mask::$ACCESS_TOKEN"
+        echo "CHECKMARX_ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
 
-    - name: Simulate IBM WAS Installation
+    - name: ✅ Run Checkmarx Scan via CLI with Access Token
       run: |
-        echo "Installing IBM WAS to $SLOT_DIR/ibm/was..."
-        echo "IBM WebSphere installed on $(date)" > $SLOT_DIR/ibm/was/install.log
-
-    - name: Build Spring Boot App
-      run: |
-        cd $SLOT_DIR/springboot-app
-        mvn clean install
-
-    - name: Run Checkmarx SAST Scan
-      uses: Checkmarx/ast-github-action@2.3.19
-      with:
-        base_uri: https://ast.checkmarx.net
-        cx_client_id: ${{ secrets.CX_CLIENT_ID }}
-        cx_client_secret: ${{ secrets.CX_CLIENT_SECRET }}
-        cx_tenant: ${{ secrets.CX_TENANT }}
-        project_name: ${{ github.repository }}
-        branch: main
-        additional_params: --report-format sarif --output-path ${{ env.SLOT_DIR }}/reports/checkmarx
+        curl -sLO https://downloads.checkmarx.com/cli/latest/Checkmarx-CLI.zip
+        unzip Checkmarx-CLI.zip -d cxcli && chmod +x cxcli/cx
+        ./cxcli/cx scan create \
+          --project-name "${{ github.repository }}" \
+          --branch-name main \
+          --base-uri https://ast.checkmarx.net \
+          --tenant ${{ secrets.CX_TENANT }} \
+          --access-token "$CHECKMARX_ACCESS_TOKEN" \
+          --report-format sarif \
+          --output-path $SLOT_DIR/reports/checkmarx
 
     - name: Upload SARIF Report
       uses: github/codeql-action/upload-sarif@v3
       with:
         sarif_file: ${{ env.SLOT_DIR }}/reports/checkmarx/cx_result.sarif
-
-    - name: ✅ Pipeline Complete
-      run: echo "✅ CI Completed in $SLOT_DIR"
