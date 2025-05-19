@@ -1,56 +1,59 @@
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
-
-# This workflow integrates a collection of open source static analysis tools
-# with GitHub code scanning. For documentation, or to provide feedback, visit
-# https://github.com/github/ossar-action
-name: OSSAR
+name: OSSAR Security Scan
 
 on:
   push:
     branches: [ "main" ]
   pull_request:
-    # The branches below must be a subset of the branches above
     branches: [ "main" ]
   schedule:
-    - cron: '25 11 * * 6'
+    - cron: '25 11 * * 6'  # 매주 토요일 11:25 AM 실행
 
 permissions:
   contents: read
+  security-events: write
 
 jobs:
-  OSSAR-Scan:
-    # OSSAR runs on windows-latest.
-    # ubuntu-latest and macos-latest support coming soon
-    permissions:
-      contents: read # for actions/checkout to fetch code
-      security-events: write # for github/codeql-action/upload-sarif to upload SARIF results
-      actions: read # only required for a private repository by github/codeql-action/upload-sarif to get the Action run status
-    runs-on: windows-latest
-
+  ossar-analysis:
+    runs-on: windows-latest  # Ubuntu/MacOS 지원시 확장 가능
+    timeout-minutes: 30
+    
     steps:
-    - name: Checkout repository
+    - name: Checkout Code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 2  # 보안 분석을 위한 최적화
 
-    # Ensure a compatible version of dotnet is installed.
-    # The [Microsoft Security Code Analysis CLI](https://aka.ms/mscadocs) is built with dotnet v3.1.201.
-    # A version greater than or equal to v3.1.201 of dotnet must be installed on the agent in order to run this action.
-    # GitHub hosted runners already have a compatible version of dotnet installed and this step may be skipped.
-    # For self-hosted runners, ensure dotnet version 3.1.201 or later is installed by including this action:
-    # - name: Install .NET
-    #   uses: actions/setup-dotnet@v4
-    #   with:
-    #     dotnet-version: '3.1.x'
+    - name: Setup .NET Core
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '3.1.x'  # OSSAR 필수 종속성
 
-      # Run open source static analysis tools
-    - name: Run OSSAR
+    - name: Run OSSAR Analysis
       uses: github/ossar-action@v1
-      id: ossar
+      id: ossar-scan
+      with:
+        scan_path: ${{ github.workspace }}
+        output_format: SARIF
+        output_file: ossar-results.sarif
+      continue-on-error: true  # 결과 업로드 보장
 
-      # Upload results to the Security tab
-    - name: Upload OSSAR results
+    - name: Upload SARIF Results
       uses: github/codeql-action/upload-sarif@v3
       with:
-        sarif_file: ${{ steps.ossar.outputs.sarifFile }}
+        sarif_file: ${{ steps.ossar-scan.outputs.sarifFile || './ossar-results.sarif' }}
+        category: "OSSAR"
+        check_name: "Open Source Security Analysis"
+
+    - name: Cache .NET Packages
+      uses: actions/cache@v4
+      with:
+        path: ~/.nuget/packages
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+        restore-keys: |
+          ${{ runner.os }}-nuget-
+
+    # 보안 결과 정리 (선택적)
+    - name: Cleanup Artifacts
+      if: always()
+      run: |
+        Remove-Item -Path ./ossar-results.sarif -Force -ErrorAction SilentlyContinue
