@@ -1,4 +1,4 @@
-name: Datadog Synthetic CI - Full Automation
+name: Datadog Synthetic CI - Full Auto with OIDC and S3 Backup
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 env:
   DATADOG_API_HOST: https://api.datadoghq.com
-  BUCKET_NAME: your-bucket-name
+  BUCKET_NAME: your-s3-bucket-name
   SLOT_PREFIX: disk-slot
 
 jobs:
@@ -20,7 +20,7 @@ jobs:
       contents: read
 
     steps:
-    - name: Checkout Repository
+    - name: Checkout repository
       uses: actions/checkout@v4
 
     - name: Configure AWS credentials via OIDC
