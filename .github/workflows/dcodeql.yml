@@ -1,0 +1,75 @@
+name: IBM Cloud SpringBoot CI/CD
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  IBM_REGION: us-south
+  REGISTRY: us.icr.io
+  APP_NAME: springboot-prod
+  K8S_NAMESPACE: production
+
+jobs:
+  build-push:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Set up Java 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Gradle Build
+      run: |
+        ./gradlew clean build
+        mkdir -p kubernetes
+        cp build/libs/*.jar kubernetes/
+
+    - name: Docker Build & Push
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: |
+          ${{ env.REGISTRY }}/${{ secrets.IBM_NAMESPACE }}/${{ env.APP_NAME }}:latest
+          ${{ env.REGISTRY }}/${{ secrets.IBM_NAMESPACE }}/${{ env.APP_NAME }}:${{ github.sha }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build-push
+    runs-on: ubuntu-22.04
+    environment: ibm-prod
+
+    steps:
+    - name: Install IBM CLI
+      uses: IBM/cloud-foundry-cli@v2
+      with:
+        version: 2.12.0
+
+    - name: IBM Cloud Login
+      run: |
+        ibmcloud config --check-version=false
+        ibmcloud login --apikey ${{ secrets.IBM_API_KEY }} -r ${{ env.IBM_REGION }}
+        ibmcloud cr region-set ${{ env.IBM_REGION }}
+        ibmcloud cr login
+
+    - name: Kubernetes Configuration
+      run: |
+        ibmcloud ks cluster config --cluster ${{ secrets.IBM_CLUSTER_ID }}
+        kubectl config set-context --current --namespace=${{ env.K8S_NAMESPACE }}
+
+    - name: Apply Kubernetes Manifests
+      run: |
+        sed -i "s|{{IMAGE}}|${{ env.REGISTRY }}/${{ secrets.IBM_NAMESPACE }}/${{ env.APP_NAME }}:latest|g" kubernetes/deployment.yaml
+        kubectl apply -f kubernetes/
+        kubectl rollout status deployment/${{ env.APP_NAME }} --timeout=120s
