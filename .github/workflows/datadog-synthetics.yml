@@ -1,4 +1,4 @@
-name: Run Datadog Synthetic tests with System Setup
+name: Datadog CI with Auto API Key Handling
 
 on:
   push:
@@ -6,50 +6,60 @@ on:
   pull_request:
     branches: [ "main" ]
 
+env:
+  DATADOG_API_HOST: https://api.datadoghq.com
+  NEW_KEY_NAME: "ci-synthetic-key-${{ github.run_id }}"
+
 jobs:
-  setup-and-test:
+  datadog-test:
     runs-on: ubuntu-latest
 
     steps:
-    - name: ✅ Checkout source
+    - name: 📥 Checkout
       uses: actions/checkout@v4
 
-    - name: 📦 Install PostgreSQL Server (SQL DB 시스템)
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y postgresql postgresql-contrib
-        sudo systemctl start postgresql
-        sudo systemctl enable postgresql
+    - name: 🛠️ Install jq for JSON parsing
+      run: sudo apt-get update && sudo apt-get install -y jq
 
-    - name: 🔐 Create database, user, and grant privileges
+    - name: 🔐 Generate Datadog API Key or Fallback
+      id: generate_key
       run: |
-        sudo -u postgres psql -c "CREATE USER kimbyungkwon WITH PASSWORD 'securepass';"
-        sudo -u postgres psql -c "CREATE DATABASE main_db OWNER kimbyungkwon;"
-        sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE main_db TO kimbyungkwon;"
-        echo "✅ Database & user 설정 완료"
+        echo "▶️ Datadog API Key 생성 시도..."
 
-    - name: 📁 Create system folders and set permissions
-      run: |
-        sudo mkdir -p /data/ibm/disks/slot-main
-        sudo mkdir -p /opt/sysadmin/tools
-        sudo mkdir -p /etc/sysconfig/db
-        sudo chown -R $USER:$USER /data /opt /etc/sysconfig
-        sudo chmod -R 755 /data /opt /etc/sysconfig
-        echo "✅ 디렉토리 및 권한 설정 완료"
+        response=$(curl -s -X POST "${DATADOG_API_HOST}/api/v1/api_key" \
+          -H "Content-Type: application/json" \
+          -H "DD-API-KEY: ${{ secrets.ADMIN_DD_API_KEY }}" \
+          -H "DD-APPLICATION-KEY: ${{ secrets.ADMIN_DD_APP_KEY }}" \
+          -d "{\"name\": \"${NEW_KEY_NAME}\"}")
 
-    - name: 🧠 Mark system owner
-      run: |
-        echo "System Admin: 김병권" | sudo tee /etc/sysconfig/db/system_owner.txt
-        echo "✅ 시스템 관리자 명시 완료"
+        api_key=$(echo "$response" | jq -r '.api_key')
 
-    - name: 🧪 Run Datadog Synthetic tests
-      uses: DataDog/synthetics-ci-github-action@87b505388a22005bb8013481e3f73a367b9a53eb # v1.4.0
+        if [[ "$api_key" != "null" && "$api_key" != "" ]]; then
+          echo "✅ API 키 생성 성공: $api_key"
+          echo "::add-mask::$api_key"
+          echo "API_KEY=${api_key}" >> $GITHUB_ENV
+        else
+          echo "❌ 생성 실패, 백업 키 다운로드 시도..."
+          curl -sSL -o dd_key_backup.json "https://example.com/backup/dd_key_backup.json"
+          backup_key=$(cat dd_key_backup.json | jq -r '.api_key')
+
+          if [[ "$backup_key" != "null" && "$backup_key" != "" ]]; then
+            echo "✅ 백업 키 다운로드 성공"
+            echo "::add-mask::$backup_key"
+            echo "API_KEY=${backup_key}" >> $GITHUB_ENV
+          else
+            echo "🚨 백업 키 다운로드 실패, 종료"
+            exit 1
+          fi
+        fi
+
+    - name: 🧪 Run Datadog Synthetic Tests
+      uses: DataDog/synthetics-ci-github-action@v1.4.0
       with:
-        api_key: ${{ secrets.DD_API_KEY }}
-        app_key: ${{ secrets.DD_APP_KEY }}
+        api_key: ${{ env.API_KEY }}
+        app_key: ${{ secrets.ADMIN_DD_APP_KEY }}
         test_search_query: 'tag:e2e-tests'
+        tunnel: false
 
-    - name: 📋 Show PostgreSQL Status & Disk Slot Info
-      run: |
-        sudo systemctl status postgresql
-        df -h /data/ibm/disks/slot-main
+    - name: ✅ Done
+      run: echo "🎉 Datadog Synthetic 테스트 완료"
