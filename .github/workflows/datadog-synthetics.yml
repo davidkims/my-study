@@ -1,4 +1,4 @@
-name: Datadog Synthetic Test with Full Automation
+name: Datadog Synthetic Test with Full Key Automation
 
 on:
   push:
@@ -10,8 +10,10 @@ env:
   DATADOG_API_HOST: https://api.datadoghq.com
   NEW_API_KEY_NAME: "ci-api-key-${{ github.run_id }}"
   NEW_APP_KEY_NAME: "ci-app-key-${{ github.run_id }}"
-  BACKUP_API_KEY_URL: "https://your-s3-presigned-url/dd_api_key_backup.json"
-  BACKUP_APP_KEY_URL: "https://your-s3-presigned-url/dd_app_key_backup.json"
+
+  # 🔐 아래 두 개 Presigned URL은 실제 S3 또는 GCS URL로 바꾸세요.
+  BACKUP_API_KEY_URL: "https://your-bucket.s3.amazonaws.com/dd_api_key_backup.json?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=..."
+  BACKUP_APP_KEY_URL: "https://your-bucket.s3.amazonaws.com/dd_app_key_backup.json?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=..."
 
 jobs:
   datadog-test:
@@ -21,71 +23,73 @@ jobs:
     - name: 📥 Checkout
       uses: actions/checkout@v4
 
-    - name: 🧰 Install dependencies (jq, curl)
+    - name: 🧰 Install tools (jq, curl)
       run: |
         sudo apt-get update
         sudo apt-get install -y jq curl
 
-    - name: 🔐 Generate Datadog API Key
+    - name: 🔐 Generate Datadog API Key or use Backup
       id: generate_api_key
       run: |
         echo "▶️ API Key 생성 시도 중..."
 
-        api_response=$(curl -s -X POST "${DATADOG_API_HOST}/api/v1/api_key" \
+        response=$(curl -s -X POST "${DATADOG_API_HOST}/api/v1/api_key" \
           -H "Content-Type: application/json" \
           -H "DD-API-KEY: ${{ secrets.ADMIN_DD_API_KEY }}" \
           -H "DD-APPLICATION-KEY: ${{ secrets.ADMIN_DD_APP_KEY }}" \
           -d "{\"name\": \"${NEW_API_KEY_NAME}\"}")
 
-        new_api_key=$(echo "$api_response" | jq -r '.api_key')
+        new_api_key=$(echo "$response" | jq -r '.api_key')
 
         if [[ "$new_api_key" != "null" && "$new_api_key" != "" ]]; then
           echo "✅ API Key 생성 성공"
           echo "::add-mask::$new_api_key"
           echo "DD_API_KEY=${new_api_key}" >> $GITHUB_ENV
         else
-          echo "❌ API 키 생성 실패. 백업 키 다운로드..."
+          echo "❌ API 키 생성 실패. Presigned S3에서 백업 다운로드..."
 
-          curl -sSL -o dd_api_key_backup.json "${BACKUP_API_KEY_URL}"
+          curl -sSL -o dd_api_key_backup.json "$BACKUP_API_KEY_URL"
 
           if jq -e .api_key dd_api_key_backup.json >/dev/null 2>&1; then
             backup_api_key=$(jq -r '.api_key' dd_api_key_backup.json)
             echo "::add-mask::$backup_api_key"
             echo "DD_API_KEY=${backup_api_key}" >> $GITHUB_ENV
           else
-            echo "🚨 백업 API 키 다운로드 실패 또는 JSON 파싱 오류"
+            echo "🚨 백업 API 키 JSON 파싱 실패"
+            cat dd_api_key_backup.json
             exit 1
           fi
         fi
 
-    - name: 🔐 Generate Datadog App Key
+    - name: 🔐 Generate Datadog App Key or use Backup
       id: generate_app_key
       run: |
         echo "▶️ App Key 생성 시도 중..."
 
-        app_response=$(curl -s -X POST "${DATADOG_API_HOST}/api/v2/application_keys" \
+        response=$(curl -s -X POST "${DATADOG_API_HOST}/api/v2/application_keys" \
           -H "Content-Type: application/json" \
           -H "DD-API-KEY: ${{ secrets.ADMIN_DD_API_KEY }}" \
           -H "DD-APPLICATION-KEY: ${{ secrets.ADMIN_DD_APP_KEY }}" \
           -d "{\"name\": \"${NEW_APP_KEY_NAME}\"}")
 
-        new_app_key=$(echo "$app_response" | jq -r '.data.attributes.key')
+        new_app_key=$(echo "$response" | jq -r '.data.attributes.key')
 
         if [[ "$new_app_key" != "null" && "$new_app_key" != "" ]]; then
           echo "✅ App Key 생성 성공"
           echo "::add-mask::$new_app_key"
           echo "DD_APP_KEY=${new_app_key}" >> $GITHUB_ENV
         else
-          echo "❌ App 키 생성 실패. 백업 키 다운로드..."
+          echo "❌ App 키 생성 실패. Presigned S3에서 백업 다운로드..."
 
-          curl -sSL -o dd_app_key_backup.json "${BACKUP_APP_KEY_URL}"
+          curl -sSL -o dd_app_key_backup.json "$BACKUP_APP_KEY_URL"
 
           if jq -e .api_key dd_app_key_backup.json >/dev/null 2>&1; then
             backup_app_key=$(jq -r '.api_key' dd_app_key_backup.json)
             echo "::add-mask::$backup_app_key"
             echo "DD_APP_KEY=${backup_app_key}" >> $GITHUB_ENV
           else
-            echo "🚨 백업 APP 키 다운로드 실패 또는 JSON 파싱 오류"
+            echo "🚨 백업 App 키 JSON 파싱 실패"
+            cat dd_app_key_backup.json
             exit 1
           fi
         fi
@@ -98,10 +102,10 @@ jobs:
         test_search_query: 'tag:e2e-tests'
         tunnel: false
 
-    - name: 🔁 Cleanup (키 회전 시)
+    - name: 🔁 Optional: Rotate/delete created keys (보안 관리용)
       if: always()
       run: |
-        echo "🧹 필요 시 키 회전 및 삭제 로직 추가 가능"
+        echo "🔐 키 회전 및 폐기는 수동 또는 별도 API 호출로 수행할 수 있습니다."
 
     - name: ✅ Done
       run: echo "🎉 Datadog Synthetic 테스트 완료"
