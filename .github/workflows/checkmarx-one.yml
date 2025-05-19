@@ -1,4 +1,4 @@
-name: Secure Spring Boot Build with Checkmarx
+name: Secure Spring Boot with Checkmarx
 
 on:
   push:
@@ -19,30 +19,38 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Setup Java
+    - name: Set up JDK 17
       uses: actions/setup-java@v3
       with:
         distribution: 'temurin'
         java-version: '17'
 
-    - name: Install PostgreSQL client (for local SQL server integration)
-      run: sudo apt-get update && sudo apt-get install -y postgresql-client
+    - name: Install PostgreSQL client
+      run: sudo apt-get update && sudo apt-get install -y postgresql-client jq curl file
 
-    - name: Create project folders
+    - name: Create project directories
       run: |
         mkdir -p springboot-app/src/main/java/com/example/demo
+        mkdir -p springboot-app/src/main/resources
         mkdir -p sql/init
         mkdir -p reports/checkmarx
-        echo "✅ 폴더 생성 완료"
+        echo "✅ 디렉토리 생성 완료"
 
-    - name: Initialize sample pom.xml and SQL file
+    - name: Create valid pom.xml and sample App
       run: |
         cat <<EOF > springboot-app/pom.xml
-        <project xmlns="http://maven.apache.org/POM/4.0.0" ...>
+        <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
           <modelVersion>4.0.0</modelVersion>
           <groupId>com.example</groupId>
           <artifactId>demo</artifactId>
           <version>0.0.1-SNAPSHOT</version>
+          <parent>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-parent</artifactId>
+            <version>2.7.5</version>
+            <relativePath/> <!-- lookup parent from repository -->
+          </parent>
           <dependencies>
             <dependency>
               <groupId>org.springframework.boot</groupId>
@@ -52,14 +60,28 @@ jobs:
         </project>
         EOF
 
+        cat <<EOF > springboot-app/src/main/java/com/example/demo/Application.java
+        package com.example.demo;
+
+        import org.springframework.boot.SpringApplication;
+        import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+        @SpringBootApplication
+        public class Application {
+            public static void main(String[] args) {
+                SpringApplication.run(Application.class, args);
+            }
+        }
+        EOF
+
         echo "CREATE TABLE test (id INT PRIMARY KEY);" > sql/init/schema.sql
 
-    - name: Build Spring Boot with Maven
+    - name: Build Spring Boot App
       run: |
         cd springboot-app
         mvn clean install
 
-    - name: Run Checkmarx One scan
+    - name: Run Checkmarx SAST Scan
       uses: checkmarx/ast-github-action@8e887bb93dacc44e0f5b64ee2b06d5815f89d4fc
       with:
         base_uri: https://ast.checkmarx.net
@@ -68,7 +90,7 @@ jobs:
         cx_tenant: ${{ secrets.CX_TENANT }}
         additional_params: --report-format sarif --output-path reports/checkmarx
 
-    - name: Upload SARIF report
+    - name: Upload SARIF Report
       uses: github/codeql-action/upload-sarif@v3
       with:
         sarif_file: reports/checkmarx/cx_result.sarif
