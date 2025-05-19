@@ -1,14 +1,14 @@
-name: Datadog Synthetic CI - Full Automation with S3 & OIDC
+name: Datadog Synthetic CI - Full Automation
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 env:
   DATADOG_API_HOST: https://api.datadoghq.com
-  BUCKET_NAME: your-bucket
+  BUCKET_NAME: your-bucket-name
   SLOT_PREFIX: disk-slot
 
 jobs:
@@ -23,27 +23,27 @@ jobs:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
-    - name: Configure AWS Credentials via OIDC
+    - name: Configure AWS credentials via OIDC
       uses: aws-actions/configure-aws-credentials@v2
       with:
         role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
         aws-region: ${{ secrets.AWS_REGION }}
 
-    - name: Set Timestamp and Slot Dir
+    - name: Set timestamp and slot directory
       run: |
         TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
         echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
         echo "SLOT_DIR=${SLOT_PREFIX}/slot-${TIMESTAMP}" >> $GITHUB_ENV
 
-    - name: Install Dependencies
+    - name: Install required tools
       run: |
         sudo apt-get update
         sudo apt-get install -y jq curl file
 
-    - name: Generate Datadog API Key or Restore from S3
+    - name: Generate Datadog API Key or restore from S3
       run: |
-        echo "Creating Datadog API Key..."
-        response=$(curl -s -X POST "$DATADOG_API_HOST/api/v1/api_key" \
+        echo "▶️ Creating Datadog API key..."
+        response=$(curl -s -X POST "${DATADOG_API_HOST}/api/v1/api_key" \
           -H "Content-Type: application/json" \
           -H "DD-API-KEY: ${{ secrets.ADMIN_DD_API_KEY }}" \
           -H "DD-APPLICATION-KEY: ${{ secrets.ADMIN_DD_APP_KEY }}" \
@@ -53,15 +53,16 @@ jobs:
         if [[ "$api_key" != "null" && "$api_key" != "" ]]; then
           echo "::add-mask::$api_key"
           echo "DD_API_KEY=${api_key}" >> $GITHUB_ENV
-          mkdir -p "$SLOT_DIR"
-          echo "{\"api_key\": \"$api_key\"}" > "$SLOT_DIR/dd_api_key_backup.json"
-          aws s3 cp "$SLOT_DIR/dd_api_key_backup.json" "s3://${BUCKET_NAME}/${SLOT_DIR}/"
+          mkdir -p "${{ env.SLOT_DIR }}"
+          echo "{\"api_key\": \"$api_key\"}" > "${{ env.SLOT_DIR }}/dd_api_key_backup.json"
+          aws s3 cp "${{ env.SLOT_DIR }}/dd_api_key_backup.json" "s3://${{ env.BUCKET_NAME }}/${{ env.SLOT_DIR }}/"
         else
-          echo "Failed to create key. Restoring from backup..."
-          aws s3 cp "s3://${BUCKET_NAME}/${SLOT_DIR}/dd_api_key_backup.json" "dd_api_key_backup.json"
+          echo "❌ API key creation failed. Trying to restore from backup..."
+          aws s3 cp "s3://${{ env.BUCKET_NAME }}/${{ env.SLOT_DIR }}/dd_api_key_backup.json" "dd_api_key_backup.json"
           content_type=$(file -b --mime-type dd_api_key_backup.json)
           if [[ "$content_type" != "application/json" ]]; then
-            echo "Invalid format: $content_type"
+            echo "Invalid backup API key format: $content_type"
+            cat dd_api_key_backup.json
             exit 1
           fi
           api_key=$(jq -r '.api_key' dd_api_key_backup.json)
@@ -69,10 +70,10 @@ jobs:
           echo "DD_API_KEY=${api_key}" >> $GITHUB_ENV
         fi
 
-    - name: Generate Datadog App Key or Restore from S3
+    - name: Generate Datadog App Key or restore from S3
       run: |
-        echo "Creating Datadog App Key..."
-        response=$(curl -s -X POST "$DATADOG_API_HOST/api/v2/application_keys" \
+        echo "▶️ Creating Datadog App key..."
+        response=$(curl -s -X POST "${DATADOG_API_HOST}/api/v2/application_keys" \
           -H "Content-Type: application/json" \
           -H "DD-API-KEY: ${{ secrets.ADMIN_DD_API_KEY }}" \
           -H "DD-APPLICATION-KEY: ${{ secrets.ADMIN_DD_APP_KEY }}" \
@@ -82,15 +83,16 @@ jobs:
         if [[ "$app_key" != "null" && "$app_key" != "" ]]; then
           echo "::add-mask::$app_key"
           echo "DD_APP_KEY=${app_key}" >> $GITHUB_ENV
-          mkdir -p "$SLOT_DIR"
-          echo "{\"api_key\": \"$app_key\"}" > "$SLOT_DIR/dd_app_key_backup.json"
-          aws s3 cp "$SLOT_DIR/dd_app_key_backup.json" "s3://${BUCKET_NAME}/${SLOT_DIR}/"
+          mkdir -p "${{ env.SLOT_DIR }}"
+          echo "{\"api_key\": \"$app_key\"}" > "${{ env.SLOT_DIR }}/dd_app_key_backup.json"
+          aws s3 cp "${{ env.SLOT_DIR }}/dd_app_key_backup.json" "s3://${{ env.BUCKET_NAME }}/${{ env.SLOT_DIR }}/"
         else
-          echo "Failed to create App Key. Restoring from backup..."
-          aws s3 cp "s3://${BUCKET_NAME}/${SLOT_DIR}/dd_app_key_backup.json" "dd_app_key_backup.json"
+          echo "❌ App key creation failed. Trying to restore from backup..."
+          aws s3 cp "s3://${{ env.BUCKET_NAME }}/${{ env.SLOT_DIR }}/dd_app_key_backup.json" "dd_app_key_backup.json"
           content_type=$(file -b --mime-type dd_app_key_backup.json)
           if [[ "$content_type" != "application/json" ]]; then
-            echo "Invalid format: $content_type"
+            echo "Invalid backup App key format: $content_type"
+            cat dd_app_key_backup.json
             exit 1
           fi
           app_key=$(jq -r '.api_key' dd_app_key_backup.json)
@@ -106,5 +108,9 @@ jobs:
         test_search_query: 'tag:e2e-tests'
         tunnel: false
 
-    - name: Done
-      run: echo "✅ Datadog Synthetic CI Finished in slot: $SLOT_DIR"
+    - name: Optional - Key Rotation or Deletion
+      if: always()
+      run: |
+        echo "ℹ️ Use Datadog API to rotate or delete API keys:"
+        echo "https://docs.datadoghq.com/api/latest/api-keys/"
+        echo "https://docs.datadoghq.com/api/latest/application-keys/"
