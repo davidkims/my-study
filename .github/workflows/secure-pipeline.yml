@@ -35,36 +35,31 @@ jobs:
 
     - name: 🔐 Get Checkmarx Access Token Automatically
       id: cx-auth
+      env:
+        CX_CLIENT_ID: ${{ secrets.CX_CLIENT_ID }}
+        CX_CLIENT_SECRET: ${{ secrets.CX_CLIENT_SECRET }}
       run: |
         echo "🔑 Requesting Checkmarx Access Token..."
-        # 강조: curl에 -v 추가 및 HTTP 상태 코드 확인
-        TOKEN_RES=$(curl -v -X POST "https://ast.checkmarx.net/auth/realms/checkmarx/protocol/openid-connect/token" \
-          -H "Content-Type: application/x-www-form-urlencoded" \
-          --data-urlencode "client_id=${{ secrets.CX_CLIENT_ID }}" \
-          --data-urlencode "client_secret=${{ secrets.CX_CLIENT_SECRET }}" \
-          --data-urlencode "grant_type=client_credentials" 2>&1)
 
-        # 강조: HTTP 오류 코드 확인
-        if echo "$TOKEN_RES" | grep -q "HTTP/.* 200"; then
-          JSON_RES=$(echo "$TOKEN_RES" | grep -v "^* ")
-        else
-          echo "❌ HTTP Error:"
+        # 엔드포인트 최신화 및 리다이렉트 방지(-L 옵션 불필요)
+        TOKEN_RES=$(curl -s -X POST "https://iam.checkmarx.net/auth/realms/checkmarx/protocol/openid-connect/token" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          --data-urlencode "client_id=$CX_CLIENT_ID" \
+          --data-urlencode "client_secret=$CX_CLIENT_SECRET" \
+          --data-urlencode "grant_type=client_credentials")
+
+        # JSON 유효성 검사
+        if ! echo "$TOKEN_RES" | jq empty > /dev/null 2>&1; then
+          echo "❌ Invalid JSON Response:"
           echo "$TOKEN_RES"
           exit 1
         fi
 
-        # 강조: jq 파싱 전 JSON 유효성 검사
-        if ! echo "$JSON_RES" | jq empty; then
-          echo "❌ Invalid JSON Response:"
-          echo "$JSON_RES"
-          exit 1
-        fi
-
-        ACCESS_TOKEN=$(echo "$JSON_RES" | jq -r '.access_token')
+        ACCESS_TOKEN=$(echo "$TOKEN_RES" | jq -r '.access_token')
 
         if [[ "$ACCESS_TOKEN" == "null" || -z "$ACCESS_TOKEN" ]]; then
           echo "❌ Failed to retrieve access token"
-          echo "$JSON_RES"
+          echo "$TOKEN_RES"
           exit 1
         fi
 
@@ -72,6 +67,10 @@ jobs:
         echo "CHECKMARX_ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
 
     - name: ✅ Run Checkmarx Scan via CLI with Access Token
+      env:
+        CHECKMARX_ACCESS_TOKEN: ${{ env.CHECKMARX_ACCESS_TOKEN }}
+        SLOT_DIR: ${{ env.SLOT_DIR }}
+        CX_TENANT: ${{ secrets.CX_TENANT }}
       run: |
         curl -sLO https://downloads.checkmarx.com/cli/latest/Checkmarx-CLI.zip
         unzip Checkmarx-CLI.zip -d cxcli && chmod +x cxcli/cx
@@ -79,7 +78,7 @@ jobs:
           --project-name "${{ github.repository }}" \
           --branch-name main \
           --base-uri https://ast.checkmarx.net \
-          --tenant "${{ secrets.CX_TENANT }}" \
+          --tenant "$CX_TENANT" \
           --access-token "$CHECKMARX_ACCESS_TOKEN" \
           --report-format sarif \
           --output-path "$SLOT_DIR/reports/checkmarx"
