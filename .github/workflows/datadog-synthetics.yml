@@ -1,0 +1,55 @@
+name: Run Datadog Synthetic tests with System Setup
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  setup-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: ✅ Checkout source
+      uses: actions/checkout@v4
+
+    - name: 📦 Install PostgreSQL Server (SQL DB 시스템)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y postgresql postgresql-contrib
+        sudo systemctl start postgresql
+        sudo systemctl enable postgresql
+
+    - name: 🔐 Create database, user, and grant privileges
+      run: |
+        sudo -u postgres psql -c "CREATE USER kimbyungkwon WITH PASSWORD 'securepass';"
+        sudo -u postgres psql -c "CREATE DATABASE main_db OWNER kimbyungkwon;"
+        sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE main_db TO kimbyungkwon;"
+        echo "✅ Database & user 설정 완료"
+
+    - name: 📁 Create system folders and set permissions
+      run: |
+        sudo mkdir -p /data/ibm/disks/slot-main
+        sudo mkdir -p /opt/sysadmin/tools
+        sudo mkdir -p /etc/sysconfig/db
+        sudo chown -R $USER:$USER /data /opt /etc/sysconfig
+        sudo chmod -R 755 /data /opt /etc/sysconfig
+        echo "✅ 디렉토리 및 권한 설정 완료"
+
+    - name: 🧠 Mark system owner
+      run: |
+        echo "System Admin: 김병권" | sudo tee /etc/sysconfig/db/system_owner.txt
+        echo "✅ 시스템 관리자 명시 완료"
+
+    - name: 🧪 Run Datadog Synthetic tests
+      uses: DataDog/synthetics-ci-github-action@87b505388a22005bb8013481e3f73a367b9a53eb # v1.4.0
+      with:
+        api_key: ${{ secrets.DD_API_KEY }}
+        app_key: ${{ secrets.DD_APP_KEY }}
+        test_search_query: 'tag:e2e-tests'
+
+    - name: 📋 Show PostgreSQL Status & Disk Slot Info
+      run: |
+        sudo systemctl status postgresql
+        df -h /data/ibm/disks/slot-main
