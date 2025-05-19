@@ -1,8 +1,8 @@
-name: Full Secure CI with Checkmarx + IBM Server + Disk Slot
+name: Secure CI - Checkmarx + IBM Setup + Disk Slot
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   workflow_dispatch:
 
 permissions:
@@ -11,11 +11,11 @@ permissions:
   security-events: write
 
 jobs:
-  full-pipeline:
+  secure-pipeline:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Repository
+    - name: Checkout Source
       uses: actions/checkout@v4
 
     - name: Set Environment Variables
@@ -29,13 +29,14 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y jq curl unzip file openjdk-17-jdk
 
-    - name: Create Disk Slot Directory
+    - name: Create Directory Structure
       run: |
         mkdir -p $SLOT_DIR/springboot-app
         mkdir -p $SLOT_DIR/sql/init
         mkdir -p $SLOT_DIR/reports/checkmarx
+        mkdir -p $SLOT_DIR/ibm/was
 
-    - name: Generate Sample pom.xml and Application.java
+    - name: Generate Spring Boot pom.xml & Sample App
       run: |
         cat <<EOF > $SLOT_DIR/springboot-app/pom.xml
         <project xmlns="http://maven.apache.org/POM/4.0.0"
@@ -74,31 +75,18 @@ jobs:
         }
         EOF
 
-    - name: Generate Checkmarx Token (Manual OAuth2 Sample)
+    - name: Simulate IBM WebSphere Installation
       run: |
-        echo "⚙️ Getting Checkmarx Access Token..."
-        TOKEN_RESPONSE=$(curl -s -X POST "https://ast.checkmarx.net/auth/realms/checkmarx/protocol/openid-connect/token" \
-          -H "Content-Type: application/x-www-form-urlencoded" \
-          -d "client_id=${{ secrets.CX_CLIENT_ID }}" \
-          -d "client_secret=${{ secrets.CX_CLIENT_SECRET }}" \
-          -d "grant_type=client_credentials")
-        ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.access_token')
-        echo "::add-mask::$ACCESS_TOKEN"
-        echo "CHECKMARX_ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
+        echo "📦 Simulating IBM WebSphere install at $SLOT_DIR/ibm/was..."
+        echo "IBM WebSphere installed on: $(date)" > $SLOT_DIR/ibm/was/install.log
 
-    - name: Build Spring Boot App
+    - name: Build Spring Boot Project
       run: |
         cd $SLOT_DIR/springboot-app
         mvn clean install
 
-    - name: Simulate IBM WebSphere Install (Mock Script)
-      run: |
-        echo "📦 Simulating IBM WebSphere Application Server install..."
-        echo "Install completed at $SLOT_DIR/ibm/was" > $SLOT_DIR/ibm_install.log
-        mkdir -p $SLOT_DIR/ibm/was
-
-    - name: Run Checkmarx SAST Scan
-      uses: checkmarx/ast-github-action@v1.0.11
+    - name: Run Checkmarx SAST Scan (v1.0.10)
+      uses: checkmarx/ast-github-action@v1.0.10
       with:
         base_uri: https://ast.checkmarx.net
         cx_client_id: ${{ secrets.CX_CLIENT_ID }}
@@ -108,11 +96,10 @@ jobs:
         branch: main
         additional_params: --report-format sarif --output-path ${{ env.SLOT_DIR }}/reports/checkmarx
 
-    - name: Upload SARIF Result
+    - name: Upload SARIF to GitHub Security Dashboard
       uses: github/codeql-action/upload-sarif@v3
       with:
         sarif_file: ${{ env.SLOT_DIR }}/reports/checkmarx/cx_result.sarif
 
-    - name: Done
-      run: |
-        echo "✅ Pipeline completed in slot: $SLOT_DIR"
+    - name: ✅ Done
+      run: echo "✅ Pipeline finished in slot: ${{ env.SLOT_DIR }}"
