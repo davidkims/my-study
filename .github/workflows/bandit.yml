@@ -1,0 +1,98 @@
+name: Integrated Security Scan
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  schedule:
+    - cron: '15 14 * * 5'
+
+permissions:
+  contents: read
+  actions: write
+  security-events: write
+
+jobs:
+  checkmarx-scan:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set Disk Slot Timestamp
+      run: |
+        TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
+        echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
+        echo "SLOT_DIR=security-reports/slot-${TIMESTAMP}" >> $GITHUB_ENV
+
+    - name: Install System Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y jq curl unzip file openjdk-17-jdk python3-pip
+
+    - name: Create Report Directories
+      run: |
+        mkdir -p $SLOT_DIR/{checkmarx,bandit}
+
+    - name: 🔐 Get Checkmarx Token
+      env:
+        CX_CLIENT_ID: ${{ secrets.CX_CLIENT_ID }}
+        CX_CLIENT_SECRET: ${{ secrets.CX_CLIENT_SECRET }}
+        CX_TENANT: ${{ secrets.CX_TENANT }}
+      run: |
+        TOKEN_RES=$(curl -s -X POST "https://iam.checkmarx.net/auth/realms/$CX_TENANT/protocol/openid-connect/token" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          --data-urlencode "client_id=$CX_CLIENT_ID" \
+          --data-urlencode "client_secret=$CX_CLIENT_SECRET" \
+          --data-urlencode "grant_type=client_credentials")
+
+        ACCESS_TOKEN=$(echo "$TOKEN_RES" | jq -r '.access_token')
+        echo "::add-mask::$ACCESS_TOKEN"
+        echo "CHECKMARX_ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
+
+    - name: ✅ Run Checkmarx Scan
+      env:
+        CHECKMARX_ACCESS_TOKEN: ${{ env.CHECKMARX_ACCESS_TOKEN }}
+      run: |
+        curl -sLO https://downloads.checkmarx.com/cli/latest/Checkmarx-CLI.zip
+        unzip Checkmarx-CLI.zip -d cxcli
+        ./cxcli/cx scan create \
+          --project-name "${{ github.repository }}" \
+          --output-path "$SLOT_DIR/checkmarx/cx_result.sarif"
+
+  bandit-scan:
+    runs-on: ubuntu-latest
+    needs: checkmarx-scan
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+
+    - name: Install Bandit
+      run: |
+        python -m pip install --upgrade pip
+        pip install bandit
+
+    - name: Run Bandit Scan
+      env:
+        SLOT_DIR: ${{ needs.checkmarx-scan.outputs.SLOT_DIR }}
+      run: |
+        bandit -r . -f sarif -o $SLOT_DIR/bandit/bandit_result.sarif
+
+    - name: Upload Bandit Report
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ env.SLOT_DIR }}/bandit/bandit_result.sarif
+
+  report-upload:
+    runs-on: ubuntu-latest
+    needs: [checkmarx-scan, bandit-scan]
+    steps:
+    - name: Upload Checkmarx Report
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ needs.checkmarx-scan.outputs.SLOT_DIR }}/checkmarx/cx_result.sarif
