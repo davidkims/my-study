@@ -1,4 +1,4 @@
-name: Datadog Synthetic Test with Full Key Automation
+name: Datadog Synthetic Test with Key Automation
 
 on:
   push:
@@ -10,20 +10,18 @@ env:
   DATADOG_API_HOST: https://api.datadoghq.com
   NEW_API_KEY_NAME: "ci-api-key-${{ github.run_id }}"
   NEW_APP_KEY_NAME: "ci-app-key-${{ github.run_id }}"
-
-  # 🔐 아래 두 개 Presigned URL은 실제 S3 또는 GCS URL로 바꾸세요.
-  BACKUP_API_KEY_URL: "https://your-bucket.s3.amazonaws.com/dd_api_key_backup.json?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=..."
-  BACKUP_APP_KEY_URL: "https://your-bucket.s3.amazonaws.com/dd_app_key_backup.json?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=..."
+  BACKUP_API_KEY_URL: "https://your-bucket.s3.amazonaws.com/dd_api_key_backup.json?X-Amz-Algorithm=..."
+  BACKUP_APP_KEY_URL: "https://your-bucket.s3.amazonaws.com/dd_app_key_backup.json?X-Amz-Algorithm=..."
 
 jobs:
   datadog-test:
     runs-on: ubuntu-latest
 
     steps:
-    - name: 📥 Checkout
+    - name: 📥 Checkout repository
       uses: actions/checkout@v4
 
-    - name: 🧰 Install tools (jq, curl)
+    - name: 🧰 Install dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y jq curl
@@ -46,8 +44,7 @@ jobs:
           echo "::add-mask::$new_api_key"
           echo "DD_API_KEY=${new_api_key}" >> $GITHUB_ENV
         else
-          echo "❌ API 키 생성 실패. Presigned S3에서 백업 다운로드..."
-
+          echo "❌ 생성 실패. Presigned URL에서 백업 키 다운로드..."
           curl -sSL -o dd_api_key_backup.json "$BACKUP_API_KEY_URL"
 
           if jq -e .api_key dd_api_key_backup.json >/dev/null 2>&1; then
@@ -79,8 +76,7 @@ jobs:
           echo "::add-mask::$new_app_key"
           echo "DD_APP_KEY=${new_app_key}" >> $GITHUB_ENV
         else
-          echo "❌ App 키 생성 실패. Presigned S3에서 백업 다운로드..."
-
+          echo "❌ 생성 실패. Presigned URL에서 백업 키 다운로드..."
           curl -sSL -o dd_app_key_backup.json "$BACKUP_APP_KEY_URL"
 
           if jq -e .api_key dd_app_key_backup.json >/dev/null 2>&1; then
@@ -105,7 +101,8 @@ jobs:
     - name: 🔁 Optional: Rotate/delete created keys (보안 관리용)
       if: always()
       run: |
-        echo "🔐 키 회전 및 폐기는 수동 또는 별도 API 호출로 수행할 수 있습니다."
+        echo "🔐 생성된 키 회전 또는 삭제는 Datadog API를 통해 수동 또는 자동으로 수행할 수 있습니다."
+        echo "🔗 https://docs.datadoghq.com/api/latest/api-keys/ 참고"
 
     - name: ✅ Done
       run: echo "🎉 Datadog Synthetic 테스트 완료"
