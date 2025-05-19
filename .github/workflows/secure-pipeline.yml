@@ -37,17 +37,34 @@ jobs:
       id: cx-auth
       run: |
         echo "🔑 Requesting Checkmarx Access Token..."
-        TOKEN_RES=$(curl -s -X POST "https://ast.checkmarx.net/auth/realms/checkmarx/protocol/openid-connect/token" \
+        # 강조: curl에 -v 추가 및 HTTP 상태 코드 확인
+        TOKEN_RES=$(curl -v -X POST "https://ast.checkmarx.net/auth/realms/checkmarx/protocol/openid-connect/token" \
           -H "Content-Type: application/x-www-form-urlencoded" \
-          -d "client_id=${{ secrets.CX_CLIENT_ID }}" \
-          -d "client_secret=${{ secrets.CX_CLIENT_SECRET }}" \
-          -d "grant_type=client_credentials")
+          --data-urlencode "client_id=${{ secrets.CX_CLIENT_ID }}" \
+          --data-urlencode "client_secret=${{ secrets.CX_CLIENT_SECRET }}" \
+          --data-urlencode "grant_type=client_credentials" 2>&1)
 
-        ACCESS_TOKEN=$(echo "$TOKEN_RES" | jq -r '.access_token')
+        # 강조: HTTP 오류 코드 확인
+        if echo "$TOKEN_RES" | grep -q "HTTP/.* 200"; then
+          JSON_RES=$(echo "$TOKEN_RES" | grep -v "^* ")
+        else
+          echo "❌ HTTP Error:"
+          echo "$TOKEN_RES"
+          exit 1
+        fi
+
+        # 강조: jq 파싱 전 JSON 유효성 검사
+        if ! echo "$JSON_RES" | jq empty; then
+          echo "❌ Invalid JSON Response:"
+          echo "$JSON_RES"
+          exit 1
+        fi
+
+        ACCESS_TOKEN=$(echo "$JSON_RES" | jq -r '.access_token')
 
         if [[ "$ACCESS_TOKEN" == "null" || -z "$ACCESS_TOKEN" ]]; then
-          echo "❌ Failed to retrieve Checkmarx access token"
-          echo "$TOKEN_RES"
+          echo "❌ Failed to retrieve access token"
+          echo "$JSON_RES"
           exit 1
         fi
 
@@ -62,10 +79,10 @@ jobs:
           --project-name "${{ github.repository }}" \
           --branch-name main \
           --base-uri https://ast.checkmarx.net \
-          --tenant ${{ secrets.CX_TENANT }} \
+          --tenant "${{ secrets.CX_TENANT }}" \
           --access-token "$CHECKMARX_ACCESS_TOKEN" \
           --report-format sarif \
-          --output-path $SLOT_DIR/reports/checkmarx
+          --output-path "$SLOT_DIR/reports/checkmarx"
 
     - name: Upload SARIF Report
       uses: github/codeql-action/upload-sarif@v3
