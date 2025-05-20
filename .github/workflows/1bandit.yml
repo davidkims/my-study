@@ -1,27 +1,26 @@
-name: Bandit
+name: Bandit Secure Scan
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
   schedule:
-    - cron: '20 15 * * 4'
+    - cron: '20 15 * * 4'  # 매주 목요일 15:20 UTC
+
+permissions:
+  contents: read
+  security-events: write
 
 jobs:
   bandit:
     runs-on: ubuntu-latest
 
-    permissions:
-      contents: read
-      security-events: write
-      actions: read
-
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python 3.11
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
@@ -29,14 +28,19 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install flask bandit bandit-to-sarif
+          pip install flask bandit
 
-      - name: Run Bandit and convert to SARIF
+      - name: Run Bandit scan (JSON format)
         run: |
           bandit -r . -f json -o bandit-results.json
-          bandit-to-sarif bandit-results.json > bandit-results.sarif
 
-      - name: Upload SARIF results to GitHub
+      - name: Convert Bandit JSON to SARIF (manual converter)
+        run: |
+          curl -L -o bandit-to-sarif "https://github.com/microsoft/bandit-to-sarif/releases/download/v1.0.0/bandit-to-sarif-linux"
+          chmod +x bandit-to-sarif
+          ./bandit-to-sarif -i bandit-results.json -o bandit-results.sarif
+
+      - name: Upload SARIF results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v2
         with:
           sarif_file: bandit-results.sarif
