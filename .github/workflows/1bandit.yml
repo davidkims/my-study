@@ -34,12 +34,15 @@ jobs:
         run: |
           bandit -r . -f json -o bandit-results.json --exit-zero
 
+      - name: Download bandit_to_sarif.py script directly
+        run: |
+          curl -L -o bandit_to_sarif.py https://raw.githubusercontent.com/microsoft/bandit-to-sarif/main/bandit_to_sarif.py
+
       - name: Convert Bandit JSON to SARIF
         run: |
-          git clone https://github.com/microsoft/bandit-to-sarif.git
-          python3 bandit-to-sarif/bandit_to_sarif.py -i bandit-results.json -o bandit-results.sarif
+          python3 bandit_to_sarif.py -i bandit-results.json -o bandit-results.sarif
 
-      - name: Upload to GitHub Security tab
+      - name: Upload SARIF to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v2
         with:
           sarif_file: bandit-results.sarif
