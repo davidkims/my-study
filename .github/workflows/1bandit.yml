@@ -34,11 +34,7 @@ jobs:
         run: |
           bandit -r . -f json -o bandit-results.json --exit-zero
 
-      - name: Download bandit_to_sarif.py script directly
-        run: |
-          curl -L -o bandit_to_sarif.py https://raw.githubusercontent.com/microsoft/bandit-to-sarif/main/bandit_to_sarif.py
-
-      - name: Convert Bandit JSON to SARIF
+      - name: Generate SARIF from Bandit JSON
         run: |
           python3 bandit_to_sarif.py -i bandit-results.json -o bandit-results.sarif
 
