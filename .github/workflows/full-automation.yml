@@ -1,0 +1,83 @@
+name: Full System Automation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  setup-and-clean:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Clean all files in .github and workflows
+        run: |
+          echo "🔴 Deleting all files from .github and .github/workflows"
+          rm -rf .github/* || true
+          rm -rf .github/workflows/* || true
+
+      - name: Create disk-slot management structure
+        run: |
+          TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
+          export SLOT_DIR=disk-slot/slot-${TIMESTAMP}
+          mkdir -p "${SLOT_DIR}/java"
+          mkdir -p "${SLOT_DIR}/cpp"
+          mkdir -p "${SLOT_DIR}/springboot"
+          mkdir -p "${SLOT_DIR}/sql"
+          echo "🗂 Created structure under ${SLOT_DIR}"
+
+  setup-environments:
+    runs-on: ubuntu-latest
+    needs: setup-and-clean
+    steps:
+      - name: Install Java and Maven
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Install C++ Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake g++
+
+      - name: Install Spring Boot CLI
+        run: |
+          curl -s "https://get.sdkman.io" | bash
+          source "$HOME/.sdkman/bin/sdkman-init.sh"
+          sdk install springboot
+
+      - name: Install MySQL Server
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-server
+
+      - name: Create sample files and set permissions
+        run: |
+          echo "public class HelloWorld { public static void main(String[] args) { System.out.println(\"Hello World\"); }}" > HelloWorld.java
+          echo "#include <iostream>\nint main() { std::cout << \"Hello, C++!\"; return 0; }" > hello.cpp
+          chmod 755 HelloWorld.java hello.cpp
+
+  generate-github-key:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate SSH key for GitHub
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keygen -t rsa -b 4096 -C "github-actions@auto.local" -N "" -f ~/.ssh/id_rsa
+          echo "🔑 Generated SSH Key:"
+          cat ~/.ssh/id_rsa.pub
+
+      - name: Register SSH deploy key (manual step required)
+        run: |
+          echo "🔔 Please manually register the above SSH public key in your GitHub repo:"
+          echo "👉 Settings > Deploy Keys > Add Key"
+
+  finalize:
+    runs-on: ubuntu-latest
+    needs: [setup-environments, generate-github-key]
+    steps:
+      - name: Summary
+        run: |
+          echo "✅ Automation completed!"
+          echo "Check disk-slot/, installed services, and registered SSH key."
