@@ -1,0 +1,79 @@
+name: Python Dev Environment Setup
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  python-matrix-setup:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Create project directories and disk slot
+        run: |
+          TIMESTAMP=$(date +"%Y%m%d-%H%M")
+          SLOT_DIR=".python-slots/slot-${TIMESTAMP}/py${{ matrix.python-version }}"
+          mkdir -p $SLOT_DIR/scripts $SLOT_DIR/env $SLOT_DIR/logs $SLOT_DIR/permissions
+          echo "📁 Created disk slot at $SLOT_DIR"
+          echo "SLOT_DIR=${SLOT_DIR}" >> $GITHUB_ENV
+
+      - name: Install dependencies and set up virtualenv
+        run: |
+          python -m pip install --upgrade pip virtualenv
+          python -m virtualenv $SLOT_DIR/env
+          source $SLOT_DIR/env/bin/activate
+          pip install flake8 pytest
+
+      - name: Create example Python files
+        run: |
+          cat << EOF > $SLOT_DIR/scripts/main.py
+          #!/usr/bin/env python
+          def main():
+              print("Python version: ${{ matrix.python-version }} - Hello from the disk slot!")
+          if __name__ == "__main__":
+              main()
+          EOF
+
+          cat << EOF > $SLOT_DIR/scripts/test_sample.py
+          def test_example():
+              assert 1 + 1 == 2
+          EOF
+
+      - name: Create permission map and dev config
+        run: |
+          echo "USER=developer" > $SLOT_DIR/permissions/permissions.txt
+          echo "ACCESS_LEVEL=read-write" >> $SLOT_DIR/permissions/permissions.txt
+
+          echo "[config]" > $SLOT_DIR/dev.config
+          echo "python_version=${{ matrix.python-version }}" >> $SLOT_DIR/dev.config
+          echo "slot_path=${SLOT_DIR}" >> $SLOT_DIR/dev.config
+
+      - name: Lint with flake8
+        run: |
+          source $SLOT_DIR/env/bin/activate
+          flake8 $SLOT_DIR/scripts --max-line-length=120
+
+      - name: Test with pytest
+        run: |
+          source $SLOT_DIR/env/bin/activate
+          pytest $SLOT_DIR/scripts
+
+      - name: List Disk Slot Contents
+        run: |
+          echo "📂 Disk Slot Layout:"
+          tree $SLOT_DIR || ls -R $SLOT_DIR
