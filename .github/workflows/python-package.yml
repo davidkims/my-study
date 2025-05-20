@@ -43,8 +43,12 @@ jobs:
         run: |
           cat << EOF > $SLOT_DIR/scripts/main.py
           #!/usr/bin/env python
+
+
           def main():
               print("Python version: ${{ matrix.python-version }} - Hello from the disk slot!")
+
+
           if __name__ == "__main__":
               main()
           EOF
