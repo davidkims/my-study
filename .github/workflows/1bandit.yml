@@ -34,11 +34,11 @@ jobs:
         run: |
           bandit -r . -f json -o bandit-results.json --exit-zero
 
-      - name: Generate SARIF from Bandit JSON
+      - name: Convert Bandit JSON to SARIF
         run: |
           python3 bandit_to_sarif.py -i bandit-results.json -o bandit-results.sarif
 
       - name: Upload SARIF to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v2
+        uses: github/codeql-action/upload-sarif@v3  # ✅ 최신 버전
         with:
           sarif_file: bandit-results.sarif
