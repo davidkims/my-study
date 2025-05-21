@@ -12,18 +12,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout
+    - name: Checkout Repository
       uses: actions/checkout@v4
 
-    - name: Install AWS CLI
+    - name: Install AWS CLI and jq
       run: |
         sudo apt-get update
-        sudo apt-get install -y awscli jq
+        sudo apt-get install -y jq
+        python3 -m pip install --upgrade pip
+        pip install awscli
 
-    - name: Configure AWS CLI (Assume Role via GitHub OIDC)
+    - name: Configure AWS CLI via GitHub OIDC
       uses: aws-actions/configure-aws-credentials@v4
       with:
-        role-to-assume: arn:aws:iam::<AWS_ACCOUNT_ID>:role/<ROLE_NAME>
+        role-to-assume: arn:aws:iam::<AWS_ACCOUNT_ID>:role/<ROLE_NAME>  # ← 수정
         aws-region: ap-northeast-2
 
     - name: Create AWS Access Key
@@ -31,14 +33,14 @@ jobs:
       run: |
         echo "🔐 Creating new AWS Access Key..."
         ACCESS_KEY_JSON=$(aws iam create-access-key --user-name github-deploy-user)
-        echo "$ACCESS_KEY_JSON" > .github/workflows/key-log.log
-        echo "✅ Access Key Created."
 
-        # Export for logging purposes (DO NOT DO THIS IN PROD)
+        echo "$ACCESS_KEY_JSON" > .github/workflows/key-log.log
+
+        echo "✅ Access Key Created."
         echo "ACCESS_KEY_ID=$(echo $ACCESS_KEY_JSON | jq -r .AccessKey.AccessKeyId)" >> $GITHUB_ENV
         echo "SECRET_ACCESS_KEY=$(echo $ACCESS_KEY_JSON | jq -r .AccessKey.SecretAccessKey)" >> $GITHUB_ENV
 
-    - name: Show Created Key (For Debug - REMOVE IN PRODUCTION)
+    - name: Show Access Key (for debug - remove in production)
       run: |
         echo "🪪 AccessKeyId: $ACCESS_KEY_ID"
         echo "🕶 SecretAccessKey: $SECRET_ACCESS_KEY"
@@ -46,8 +48,8 @@ jobs:
 
     - name: Commit Key Log
       run: |
-        git config user.name "github-actions"
-        git config user.email "actions@github.com"
+        git config --global user.name "github-actions"
+        git config --global user.email "actions@github.com"
         git add .github/workflows/key-log.log
-        git commit -m "🔐 Log: AWS Access Key Created"
+        git commit -m "🔐 AWS Access Key created and logged"
         git push
