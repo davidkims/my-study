@@ -1,42 +1,75 @@
-name: Bootstrap OIDC and Generate IAM Access Key
+name: Secure AWS OIDC Setup and IAM Key Generation
 
 on:
   workflow_dispatch:
 
 env:
   AWS_REGION: ap-northeast-2
-  AWS_ACCOUNT_ID: "123456789012"
+  AWS_ACCOUNT_ID: "123456789012"               # ← 본인 AWS 계정 ID
   ROLE_NAME: github-actions-oidc-role
   IAM_USER_NAME: github-deploy-user
   REPO_NAME: davidkims/my-repo
 
 jobs:
-  step1-create-oidc-role:
-    name: Step 1 - Create OIDC Provider and IAM Role
+  check-for-paid-resources:
+    name: Step 0 - 결제 유발 서비스 확인
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-
-    - name: Install AWS CLI and jq
+    - name: Install AWS CLI
       run: |
         sudo apt-get update
         sudo apt-get install -y jq
-        python3 -m pip install --upgrade pip
         pip install awscli
 
-    - name: Authenticate to AWS with access keys
+    - name: Authenticate with access keys
       uses: aws-actions/configure-aws-credentials@v4
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
-    - name: Create OIDC provider, IAM role, and attach policy
+    - name: Check for paid resources
       run: |
-        echo "📌 Checking for existing OIDC provider..."
+        echo "🔍 Checking for active EC2 instances..."
+        EC2_RUNNING=$(aws ec2 describe-instances --query "Reservations[*].Instances[*].State.Name" --output text | grep running || true)
+
+        echo "🔍 Checking for active RDS instances..."
+        RDS_RUNNING=$(aws rds describe-db-instances --query "DBInstances[*].DBInstanceStatus" --output text | grep available || true)
+
+        echo "🔍 Checking for active CloudRun services..."
+        RUN_SERVICES=$(aws run list-services --region $AWS_REGION --output text || true)
+
+        if [[ -n "$EC2_RUNNING" || -n "$RDS_RUNNING" || -n "$RUN_SERVICES" ]]; then
+          echo "❌ 결제 유발 가능성이 있는 리소스가 존재합니다. 실행을 중단합니다."
+          exit 1
+        fi
+
+        echo "✅ 과금 유발 리소스 없음. 계속 진행합니다."
+
+  setup-oidc-role:
+    name: Step 1 - OIDC 공급자 및 IAM 역할 생성
+    needs: check-for-paid-resources
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Install AWS CLI
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y jq
+        pip install awscli
+
+    - name: Authenticate to AWS (Access Keys)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Create OIDC Provider and IAM Role
+      run: |
+        echo "📌 Checking OIDC provider..."
         OIDC_EXISTS=$(aws iam list-open-id-connect-providers | grep token.actions.githubusercontent.com || true)
+
         if [ -z "$OIDC_EXISTS" ]; then
           echo "✅ Creating OIDC provider..."
           aws iam create-open-id-connect-provider \
@@ -47,7 +80,7 @@ jobs:
           echo "✅ OIDC provider already exists."
         fi
 
-        echo "📌 Creating IAM role for GitHub OIDC..."
+        echo "📌 Creating IAM role..."
         TRUST_POLICY=$(cat <<EOF
         {
           "Version": "2012-10-17",
@@ -72,7 +105,7 @@ jobs:
 
         aws iam create-role --role-name "${ROLE_NAME}" --assume-role-policy-document "$TRUST_POLICY" || echo "ℹ️ Role already exists."
 
-        echo "📌 Attaching IAM inline policy..."
+        echo "📌 Attaching inline policy to role..."
         POLICY=$(cat <<EOF
         {
           "Version": "2012-10-17",
@@ -95,9 +128,9 @@ jobs:
           --policy-name allow-access-key \
           --policy-document "$POLICY"
 
-  step2-create-key-via-oidc:
-    name: Step 2 - Use OIDC and Generate Access Key
-    needs: step1-create-oidc-role
+  create-access-key:
+    name: Step 2 - OIDC 인증 후 키 생성 및 로그 저장
+    needs: setup-oidc-role
     runs-on: ubuntu-latest
 
     permissions:
@@ -105,38 +138,37 @@ jobs:
       contents: write
 
     steps:
-    - name: Checkout Repository
+    - name: Checkout
       uses: actions/checkout@v4
 
-    - name: Install AWS CLI
+    - name: Install AWS CLI and jq
       run: |
         sudo apt-get update
         sudo apt-get install -y jq
-        python3 -m pip install --upgrade pip
         pip install awscli
 
-    - name: Authenticate to AWS using OIDC
+    - name: Authenticate with OIDC
       uses: aws-actions/configure-aws-credentials@v4
       with:
         role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/${{ env.ROLE_NAME }}
         aws-region: ${{ env.AWS_REGION }}
         audience: sts.amazonaws.com
 
-    - name: Create Access Key
+    - name: Create Access Key for IAM User
       run: |
         ACCESS_KEY_JSON=$(aws iam create-access-key --user-name $IAM_USER_NAME)
         echo "$ACCESS_KEY_JSON" > .github/workflows/key-log.log
 
-        echo "✅ Access key created and saved to key-log.log"
         ACCESS_KEY_ID=$(echo "$ACCESS_KEY_JSON" | jq -r .AccessKey.AccessKeyId)
         SECRET_KEY=$(echo "$ACCESS_KEY_JSON" | jq -r .AccessKey.SecretAccessKey)
+
         echo "🪪 AccessKeyId: $ACCESS_KEY_ID"
         echo "🔐 SecretAccessKey: $SECRET_KEY"
 
-    - name: Commit Key Log
+    - name: Commit key log
       run: |
         git config user.name "github-actions"
         git config user.email "actions@github.com"
         git add .github/workflows/key-log.log
-        git commit -m "🔐 IAM access key generated and logged"
+        git commit -m "🔐 IAM Access Key Generated"
         git push
