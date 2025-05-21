@@ -7,6 +7,12 @@ permissions:
   id-token: write
   contents: write
 
+env:
+  AWS_ACCOUNT_ID: "123456789012"              # ← 본인 계정 ID
+  AWS_ROLE_NAME: "github-actions-oidc-role"
+  AWS_REGION: "ap-northeast-2"
+  IAM_USERNAME: "github-deploy-user"
+
 jobs:
   generate-aws-key:
     runs-on: ubuntu-latest
@@ -22,34 +28,37 @@ jobs:
         python3 -m pip install --upgrade pip
         pip install awscli
 
-    - name: Configure AWS CLI via GitHub OIDC
+    - name: Configure AWS Credentials via OIDC
       uses: aws-actions/configure-aws-credentials@v4
       with:
-        role-to-assume: arn:aws:iam::<AWS_ACCOUNT_ID>:role/<ROLE_NAME>  # ← 수정
-        aws-region: ap-northeast-2
+        role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/${{ env.AWS_ROLE_NAME }}
+        aws-region: ${{ env.AWS_REGION }}
+        audience: sts.amazonaws.com
 
     - name: Create AWS Access Key
       id: create_key
       run: |
-        echo "🔐 Creating new AWS Access Key..."
-        ACCESS_KEY_JSON=$(aws iam create-access-key --user-name github-deploy-user)
+        echo "🔐 Creating AWS Access Key for user: $IAM_USERNAME"
+        ACCESS_KEY_JSON=$(aws iam create-access-key --user-name $IAM_USERNAME)
 
         echo "$ACCESS_KEY_JSON" > .github/workflows/key-log.log
 
-        echo "✅ Access Key Created."
-        echo "ACCESS_KEY_ID=$(echo $ACCESS_KEY_JSON | jq -r .AccessKey.AccessKeyId)" >> $GITHUB_ENV
-        echo "SECRET_ACCESS_KEY=$(echo $ACCESS_KEY_JSON | jq -r .AccessKey.SecretAccessKey)" >> $GITHUB_ENV
+        ACCESS_KEY_ID=$(echo "$ACCESS_KEY_JSON" | jq -r .AccessKey.AccessKeyId)
+        SECRET_KEY=$(echo "$ACCESS_KEY_JSON" | jq -r .AccessKey.SecretAccessKey)
 
-    - name: Show Access Key (for debug - remove in production)
+        echo "ACCESS_KEY_ID=$ACCESS_KEY_ID" >> $GITHUB_ENV
+        echo "SECRET_KEY=$SECRET_KEY" >> $GITHUB_ENV
+
+    - name: Show Key in Logs (Debug only – Remove in production)
       run: |
         echo "🪪 AccessKeyId: $ACCESS_KEY_ID"
-        echo "🕶 SecretAccessKey: $SECRET_ACCESS_KEY"
-        echo "📝 Log saved to: .github/workflows/key-log.log"
+        echo "🕶 SecretAccessKey: $SECRET_KEY"
+        echo "📝 Log file created: .github/workflows/key-log.log"
 
     - name: Commit Key Log
       run: |
-        git config --global user.name "github-actions"
-        git config --global user.email "actions@github.com"
+        git config user.name "github-actions"
+        git config user.email "actions@github.com"
         git add .github/workflows/key-log.log
-        git commit -m "🔐 AWS Access Key created and logged"
+        git commit -m "🔐 AWS Access Key generated and logged"
         git push
