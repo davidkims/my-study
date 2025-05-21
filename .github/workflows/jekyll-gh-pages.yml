@@ -1,4 +1,4 @@
-name: Infra DevOps Full Automation
+name: Full Infra DevOps Automation
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   id-token: write
 
 jobs:
-  infra:
+  build:
     runs-on: ubuntu-latest
 
     env:
@@ -29,36 +29,38 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Setup JDK and Python
+      - name: Set up JDK and Python
         uses: actions/setup-java@v3
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Install packages
+      - name: Install tools and Python packages
         run: |
-          sudo apt update && sudo apt install -y unzip tree mailutils awscli postgresql postgresql-client python3-pip
+          sudo apt update
+          sudo apt install -y unzip tree awscli postgresql postgresql-client python3-pip
           pip3 install fastapi uvicorn psycopg2-binary
 
-      # Spring Boot 빌드
-      - name: Build Spring Boot App
+      - name: Create directories
         run: |
-          mkdir -p target
-          echo 'public class Main { public static void main(String[] args) { System.out.println("Hello Spring Boot"); } }' > Main.java
+          mkdir -p target ${{ env.SLOT_DIR }}/logs uploads
+
+      - name: Build Spring Boot-like JAR
+        run: |
+          echo 'public class Main { public static void main(String[] args) { System.out.println("Spring Boot running"); } }' > Main.java
           javac Main.java -d target
-          echo 'Manifest-Version: 1.0\nMain-Class: Main' > manifest.txt
+          echo 'Main-Class: Main' > manifest.txt
           jar cfm ${{ env.JAR_PATH }} manifest.txt -C target/ .
 
-      # Spring Boot JAR 실행 확인
-      - name: Run JAR
+      - name: Run Java App
         run: |
-          java -jar ${{ env.JAR_PATH }} > ${{ env.SLOT_DIR }}/logs/jar_output.log || true
+          java -jar ${{ env.JAR_PATH }} > ${{ env.SLOT_DIR }}/logs/spring-output.log || true
 
-      # FastAPI 서버 및 DB 연동
-      - name: Run FastAPI with DB
+      - name: Write FastAPI app with PostgreSQL and upload API
         run: |
           echo 'from fastapi import FastAPI, UploadFile, File
 import psycopg2
+
 app = FastAPI()
 
 @app.get("/health")
@@ -71,7 +73,7 @@ async def upload(file: UploadFile = File(...)):
     return {"filename": file.filename}
 
 @app.get("/db")
-def db_connect():
+def db_check():
     conn = psycopg2.connect(
         dbname="${{ env.DB_NAME }}",
         user="${{ env.DB_USER }}",
@@ -83,21 +85,19 @@ def db_connect():
     return {"db_version": cur.fetchone()}
 ' > app.py
 
-          mkdir -p uploads
-          nohup uvicorn app:app --host 0.0.0.0 --port 8000 & echo $! > uvicorn.pid
+      - name: Launch FastAPI
+        run: |
+          nohup uvicorn app:app --host 0.0.0.0 --port 8000 & echo $! > fastapi.pid
           sleep 5
           curl -f http://localhost:8000/health
 
-      # 보안 로그 생성 및 리포트 압축
-      - name: Generate Reports & Logs
+      - name: Generate ISMS-P logs and report
         run: |
-          mkdir -p ${{ env.SLOT_DIR }}/logs
-          echo "[AUDIT] User login" > ${{ env.SLOT_DIR }}/logs/audit.log
-          echo "[ACCESS] File uploaded" > ${{ env.SLOT_DIR }}/logs/access.log
-          echo "Build successful for slot ${{ env.SLOT_ID }}" > ${{ env.SLOT_DIR }}/logs/report.log
+          echo "[AUDIT] Login" > ${{ env.SLOT_DIR }}/logs/audit.log
+          echo "[ACCESS] Upload triggered" > ${{ env.SLOT_DIR }}/logs/access.log
+          echo "Slot ${{ env.SLOT_ID }} build complete." > ${{ env.SLOT_DIR }}/logs/report.log
           tar czf ${{ env.SLOT_DIR }}/logs/report.tar.gz -C ${{ env.SLOT_DIR }}/logs .
 
-      # 리포트 → S3 업로드
       - name: Upload report to S3
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -106,53 +106,58 @@ def db_connect():
         run: |
           aws s3 cp ${{ env.SLOT_DIR }}/logs/report.tar.gz s3://${{ env.S3_BUCKET }}/slot-${{ env.SLOT_ID }}/report.tar.gz
 
-      # 로그 전송 (CloudWatch 예시)
-      - name: Push logs to CloudWatch
+      - name: Send logs to CloudWatch
         run: |
           GROUP="DevOpsLogs"
           STREAM="slot-${{ env.SLOT_ID }}"
           aws logs create-log-stream --log-group-name $GROUP --log-stream-name $STREAM || true
           TIMESTAMP=$(($(date +%s%3N)))
-          LOG="{\"logEvents\":[{\"timestamp\":$TIMESTAMP,\"message\":\"Spring Boot + FastAPI 실행 완료\"}]}"
-          aws logs put-log-events --log-group-name $GROUP --log-stream-name $STREAM --log-events file://<(echo $LOG)
+          echo "{\"logEvents\":[{\"timestamp\":$TIMESTAMP,\"message\":\"Slot ${{ env.SLOT_ID }} finished.\"}]}" > log.json
+          aws logs put-log-events --log-group-name $GROUP --log-stream-name $STREAM --log-events file://log.json
 
-      # index 생성
       - name: Generate index.md
         run: |
           cat <<EOF > index.md
           ---
           layout: default
-          title: Full Infra 자동화 보고서
+          title: DevOps 자동화 보고서
           ---
 
-          # ☁️ 자동화 보고서
+          # ✅ 전체 자동화 기능
 
-          ✅ Spring Boot 빌드 및 실행  
-          ✅ FastAPI + PostgreSQL 헬스체크  
-          ✅ 파일 업로드: /upload  
-          ✅ 보안 로그 생성 및 리포트 압축  
-          ✅ S3 업로드 및 CloudWatch 전송  
-
-          ## FastAPI Health Check
-          \`\`\`
-          curl http://localhost:8000/health
-          \`\`\`
+          - Spring Boot 빌드 및 실행
+          - FastAPI + PostgreSQL + 파일 업로드
+          - 리포트 S3 업로드
+          - CloudWatch 로그 전송
 
           ## S3 리포트
+          \`\`\`
           s3://${{ env.S3_BUCKET }}/slot-${{ env.SLOT_ID }}/report.tar.gz
+          \`\`\`
+
+          ## API 테스트
+          - \`GET /health\`
+          - \`GET /db\`
+          - \`POST /upload\`
           EOF
 
       - name: Generate _config.yml
         run: |
-          echo 'title: DevOps Infra\ninclude:\n  - .disk-slots\n  - uploads\n  - .github' > _config.yml
+          echo "title: DevOps Infra\ninclude:\n  - .disk-slots\n  - uploads\n  - .github" > _config.yml
 
-      - name: Build with Jekyll
+      - name: Copy workflows and reports to _site
+        run: |
+          mkdir -p _site/github/workflows
+          cp -r .github/workflows/* _site/github/workflows/
+          cp -r ${{ env.SLOT_DIR }}/logs/* _site/
+
+      - name: Build Jekyll
         uses: actions/jekyll-build-pages@v1
         with:
           source: ./
           destination: ./_site
 
-      - name: Upload Pages Artifact
+      - name: Upload artifact to Pages
         uses: actions/upload-pages-artifact@v3
 
   deploy:
@@ -160,7 +165,7 @@ def db_connect():
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
-    needs: infra
+    needs: build
 
     steps:
       - name: Deploy to GitHub Pages
