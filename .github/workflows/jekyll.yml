@@ -1,4 +1,4 @@
-name: Full GitHub Pages Deploy with Disk & Workflow Exposure
+name: Full GitHub Pages Deploy with Backend, Logs, and Reports
 
 on:
   push:
@@ -25,22 +25,37 @@ jobs:
       - name: Setup GitHub Pages
         uses: actions/configure-pages@v5
 
-      - name: Create server directories and permissions
+      - name: Create server and disk directories
         run: |
           mkdir -p ~/my-app/{logs,bin,config,tmp}
-          chmod -R 755 ~/my-app
-
-      - name: Create disk slot structure
-        run: |
           TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
           SLOT_DIR=".disk-slots/slot-${TIMESTAMP}"
           mkdir -p "${SLOT_DIR}"/{build,config,public,logs}
           echo "SLOT_DIR=${SLOT_DIR}" >> $GITHUB_ENV
 
-      - name: Install base packages
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl unzip tree
+          sudo apt-get install -y curl unzip tree python3 python3-pip openjdk-17-jdk
+          pip3 install fastapi uvicorn
+
+      - name: Start FastAPI Server
+        run: |
+          echo 'from fastapi import FastAPI
+app = FastAPI()
+@app.get("/health")
+def read_root(): return {"status": "ok"}' > app.py
+          nohup uvicorn app:app --host 0.0.0.0 --port 8000 & echo $! > uvicorn.pid
+          sleep 3
+          curl -f http://localhost:8000/health || (echo "❌ FastAPI failed" && exit 1)
+
+      - name: Generate ISMS-P security logs
+        run: |
+          mkdir -p logs
+          echo "[AUDIT] $(date) - Admin accessed /settings" >> logs/audit.log
+          echo "[ACCESS] $(date) - User login from IP 192.168.0.1" >> logs/access.log
+          echo "[REPORT] $(date) - Report generated for slot $SLOT_DIR" >> ${SLOT_DIR}/logs/report.log
+          tar -czf ${SLOT_DIR}/logs/isms-p-logs.tar.gz logs/
 
       - name: Generate index.md
         run: |
@@ -54,35 +69,48 @@ jobs:
 
           안녕하세요. 저는 열정적인 개발자 **김병권**입니다.
 
-          ## ✅ 주요 기술
-          - Python, Java, Spring Boot
-          - GitHub Actions, Docker, AWS
-          - 보안 인증 (ISMS-P, CC 등)
-
-          ## 💼 자동화 구성 요소
-          - 서버 디렉토리: ~/my-app/
+          ## 🔌 시스템 통합 구성
+          - FastAPI 백엔드 → [헬스체크](http://localhost:8000/health)
           - 디스크 슬롯: \`${{ env.SLOT_DIR }}\`
-          - Workflows 노출: [보기](/github/workflows/)
+          - 보안 로그: audit.log, access.log
+          - 자동 리포트 업로드
 
-          > 감사합니다.
+          ## 📂 구조
+          \`\`\`bash
+          ~/my-app/
+          ├── logs/
+          ├── bin/
+          └── config/
+
+          .disk-slots/
+          └── slot-<timestamp>/
+              ├── build/
+              ├── logs/
+              │   ├── report.log
+              │   └── isms-p-logs.tar.gz
+              └── public/
+          \`\`\`
+
+          > 모든 과정은 자동화됩니다.
           EOF
 
       - name: Generate _config.yml
         run: |
           cat <<EOF > _config.yml
-          title: 김병권의 자동화 페이지
-          description: GitHub Actions + Jekyll + Server Infra
+          title: 김병권 자동화 페이지
+          description: Backend + Log + Slot + GitHub Pages 통합
           theme: minima
           include:
+            - .disk-slots
             - .github
           EOF
 
-      # ✅ .github/workflows 디렉토리를 _site/ 하위로 복사
-      - name: Copy .github/workflows for page publishing
+      - name: Copy .github/workflows and reports
         run: |
           mkdir -p ./_site/github/workflows
           cp -r .github/workflows/* ./_site/github/workflows/
-          echo "✅ Copied .github/workflows to _site/"
+          mkdir -p ./_site/reports
+          cp -r ${SLOT_DIR}/logs/* ./_site/reports/
 
       - name: Build Jekyll site
         uses: actions/jekyll-build-pages@v1
