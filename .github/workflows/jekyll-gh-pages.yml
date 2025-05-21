@@ -1,4 +1,4 @@
-name: Full Infra DevOps Automation
+name: Deploy Jekyll and PostgreSQL Check
 
 on:
   push:
@@ -6,158 +6,76 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   pages: write
   id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
-    env:
-      SLOT_ID: ${{ github.run_id }}
-      SLOT_DIR: .disk-slots/slot-${{ github.run_id }}
-      JAR_PATH: ./target/app.jar
-      DB_NAME: mydb
-      DB_USER: postgres
-      DB_PASS: postgres
-      DB_HOST: 127.0.0.1
-      S3_BUCKET: my-pages-reports-bucket
-      EMAIL_TO: your@email.com
-
     steps:
-      - name: Checkout source
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK and Python
-        uses: actions/setup-java@v3
-        with:
-          distribution: 'temurin'
-          java-version: '17'
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v5
 
-      - name: Install tools and Python packages
+      - name: Install Python and psycopg2
         run: |
-          sudo apt update
-          sudo apt install -y unzip tree awscli postgresql postgresql-client python3-pip
-          pip3 install fastapi uvicorn psycopg2-binary
+          sudo apt-get update
+          sudo apt-get install -y python3-pip libpq-dev
+          pip3 install psycopg2-binary
 
-      - name: Create directories
+      - name: Create Python DB script
         run: |
-          mkdir -p target ${{ env.SLOT_DIR }}/logs uploads
-
-      - name: Build Spring Boot-like JAR
-        run: |
-          echo 'public class Main { public static void main(String[] args) { System.out.println("Spring Boot running"); } }' > Main.java
-          javac Main.java -d target
-          echo 'Main-Class: Main' > manifest.txt
-          jar cfm ${{ env.JAR_PATH }} manifest.txt -C target/ .
-
-      - name: Run Java App
-        run: |
-          java -jar ${{ env.JAR_PATH }} > ${{ env.SLOT_DIR }}/logs/spring-output.log || true
-
-      - name: Write FastAPI app with PostgreSQL and upload API
-        run: |
-          echo 'from fastapi import FastAPI, UploadFile, File
-import psycopg2
-
-app = FastAPI()
-
-@app.get("/health")
-def health(): return {"status": "ok"}
-
-@app.post("/upload")
-async def upload(file: UploadFile = File(...)):
-    with open(f"uploads/{file.filename}", "wb") as f:
-        f.write(await file.read())
-    return {"filename": file.filename}
-
-@app.get("/db")
-def db_check():
+          echo 'import psycopg2
+try:
     conn = psycopg2.connect(
-        dbname="${{ env.DB_NAME }}",
-        user="${{ env.DB_USER }}",
-        password="${{ env.DB_PASS }}",
-        host="${{ env.DB_HOST }}"
+        dbname="mydb",
+        user="postgres",
+        password="postgres",
+        host="127.0.0.1",
+        port=5432
     )
     cur = conn.cursor()
     cur.execute("SELECT version();")
-    return {"db_version": cur.fetchone()}
-' > app.py
+    print("✅ PostgreSQL 연결 성공:", cur.fetchone()[0])
+except Exception as e:
+    print("❌ PostgreSQL 연결 실패:", e)
+' > check_postgres.py
 
-      - name: Launch FastAPI
-        run: |
-          nohup uvicorn app:app --host 0.0.0.0 --port 8000 & echo $! > fastapi.pid
-          sleep 5
-          curl -f http://localhost:8000/health
-
-      - name: Generate ISMS-P logs and report
-        run: |
-          echo "[AUDIT] Login" > ${{ env.SLOT_DIR }}/logs/audit.log
-          echo "[ACCESS] Upload triggered" > ${{ env.SLOT_DIR }}/logs/access.log
-          echo "Slot ${{ env.SLOT_ID }} build complete." > ${{ env.SLOT_DIR }}/logs/report.log
-          tar czf ${{ env.SLOT_DIR }}/logs/report.tar.gz -C ${{ env.SLOT_DIR }}/logs .
-
-      - name: Upload report to S3
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-        run: |
-          aws s3 cp ${{ env.SLOT_DIR }}/logs/report.tar.gz s3://${{ env.S3_BUCKET }}/slot-${{ env.SLOT_ID }}/report.tar.gz
-
-      - name: Send logs to CloudWatch
-        run: |
-          GROUP="DevOpsLogs"
-          STREAM="slot-${{ env.SLOT_ID }}"
-          aws logs create-log-stream --log-group-name $GROUP --log-stream-name $STREAM || true
-          TIMESTAMP=$(($(date +%s%3N)))
-          echo "{\"logEvents\":[{\"timestamp\":$TIMESTAMP,\"message\":\"Slot ${{ env.SLOT_ID }} finished.\"}]}" > log.json
-          aws logs put-log-events --log-group-name $GROUP --log-stream-name $STREAM --log-events file://log.json
+      - name: Run PostgreSQL DB connection script
+        run: python3 check_postgres.py
 
       - name: Generate index.md
         run: |
-          cat <<EOF > index.md
-          ---
-          layout: default
-          title: DevOps 자동화 보고서
-          ---
+          echo '---
+layout: default
+title: PostgreSQL 테스트
+---
 
-          # ✅ 전체 자동화 기능
+# GitHub Actions + Jekyll + PostgreSQL
 
-          - Spring Boot 빌드 및 실행
-          - FastAPI + PostgreSQL + 파일 업로드
-          - 리포트 S3 업로드
-          - CloudWatch 로그 전송
-
-          ## S3 리포트
-          \`\`\`
-          s3://${{ env.S3_BUCKET }}/slot-${{ env.SLOT_ID }}/report.tar.gz
-          \`\`\`
-
-          ## API 테스트
-          - \`GET /health\`
-          - \`GET /db\`
-          - \`POST /upload\`
-          EOF
+- DB 연결 확인 결과는 위 단계에서 출력됩니다.
+- 이 페이지는 GitHub Pages로 자동 배포됩니다.
+' > index.md
 
       - name: Generate _config.yml
         run: |
-          echo "title: DevOps Infra\ninclude:\n  - .disk-slots\n  - uploads\n  - .github" > _config.yml
+          echo "title: PostgreSQL 연결 확인\ninclude:\n  - index.md" > _config.yml
 
-      - name: Copy workflows and reports to _site
-        run: |
-          mkdir -p _site/github/workflows
-          cp -r .github/workflows/* _site/github/workflows/
-          cp -r ${{ env.SLOT_DIR }}/logs/* _site/
-
-      - name: Build Jekyll
+      - name: Build with Jekyll
         uses: actions/jekyll-build-pages@v1
         with:
           source: ./
           destination: ./_site
 
-      - name: Upload artifact to Pages
+      - name: Upload GitHub Pages Artifact
         uses: actions/upload-pages-artifact@v3
 
   deploy:
