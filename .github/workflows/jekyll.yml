@@ -1,4 +1,4 @@
-name: Deploy Jekyll with GitHub Pages dependencies preinstalled
+name: Deploy Jekyll Personal Page with Pages Auto-Enablement
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -21,10 +21,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Enable GitHub Pages via API
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          echo "🔧 Enabling GitHub Pages Source = GitHub Actions..."
+          curl -X PUT \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            https://api.github.com/repos/$OWNER/$REPO/pages \
+            -d '{"build_type":"workflow"}'
+
       - name: Setup GitHub Pages
         uses: actions/configure-pages@v5
 
-      - name: Generate 자기소개서 (index.md)
+      - name: Generate 자기소개 페이지 (index.md)
         run: |
           cat <<EOF > index.md
           ---
@@ -61,7 +74,7 @@ jobs:
           theme: minima
           EOF
 
-      - name: Build site with Jekyll
+      - name: Build Jekyll site
         uses: actions/jekyll-build-pages@v1
         with:
           source: ./
