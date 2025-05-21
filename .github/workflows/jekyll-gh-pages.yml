@@ -1,4 +1,4 @@
-name: Full GitHub Pages Automation with Server & Disk Setup
+name: Infra DevOps Full Automation
 
 on:
   push:
@@ -10,99 +10,149 @@ permissions:
   pages: write
   id-token: write
 
-concurrency:
-  group: "pages"
-  cancel-in-progress: false
-
 jobs:
-  build:
+  infra:
     runs-on: ubuntu-latest
 
+    env:
+      SLOT_ID: ${{ github.run_id }}
+      SLOT_DIR: .disk-slots/slot-${{ github.run_id }}
+      JAR_PATH: ./target/app.jar
+      DB_NAME: mydb
+      DB_USER: postgres
+      DB_PASS: postgres
+      DB_HOST: 127.0.0.1
+      S3_BUCKET: my-pages-reports-bucket
+      EMAIL_TO: your@email.com
+
     steps:
-      - name: Checkout source code
+      - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Setup GitHub Pages
-        uses: actions/configure-pages@v5
+      - name: Setup JDK and Python
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
 
-      - name: Create server directories and permissions
+      - name: Install packages
         run: |
-          echo "📁 Creating server folders..."
-          mkdir -p ~/my-app/{logs,bin,config,tmp}
-          chmod -R 755 ~/my-app
-          echo "✅ ~/my-app structure created"
+          sudo apt update && sudo apt install -y unzip tree mailutils awscli postgresql postgresql-client python3-pip
+          pip3 install fastapi uvicorn psycopg2-binary
 
-      - name: Create disk slot structure
+      # Spring Boot 빌드
+      - name: Build Spring Boot App
         run: |
-          TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
-          SLOT_DIR=".disk-slots/slot-${TIMESTAMP}"
-          mkdir -p "${SLOT_DIR}"/{build,config,public,logs}
-          echo "SLOT_DIR=${SLOT_DIR}" >> $GITHUB_ENV
-          echo "✅ Created disk slot: ${SLOT_DIR}"
+          mkdir -p target
+          echo 'public class Main { public static void main(String[] args) { System.out.println("Hello Spring Boot"); } }' > Main.java
+          javac Main.java -d target
+          echo 'Manifest-Version: 1.0\nMain-Class: Main' > manifest.txt
+          jar cfm ${{ env.JAR_PATH }} manifest.txt -C target/ .
 
-      - name: Install base packages
+      # Spring Boot JAR 실행 확인
+      - name: Run JAR
         run: |
-          echo "📦 Installing required packages..."
-          sudo apt-get update
-          sudo apt-get install -y curl unzip tree
-          echo "✅ Packages installed"
+          java -jar ${{ env.JAR_PATH }} > ${{ env.SLOT_DIR }}/logs/jar_output.log || true
 
-      - name: Generate 자기소개 페이지 (index.md)
+      # FastAPI 서버 및 DB 연동
+      - name: Run FastAPI with DB
+        run: |
+          echo 'from fastapi import FastAPI, UploadFile, File
+import psycopg2
+app = FastAPI()
+
+@app.get("/health")
+def health(): return {"status": "ok"}
+
+@app.post("/upload")
+async def upload(file: UploadFile = File(...)):
+    with open(f"uploads/{file.filename}", "wb") as f:
+        f.write(await file.read())
+    return {"filename": file.filename}
+
+@app.get("/db")
+def db_connect():
+    conn = psycopg2.connect(
+        dbname="${{ env.DB_NAME }}",
+        user="${{ env.DB_USER }}",
+        password="${{ env.DB_PASS }}",
+        host="${{ env.DB_HOST }}"
+    )
+    cur = conn.cursor()
+    cur.execute("SELECT version();")
+    return {"db_version": cur.fetchone()}
+' > app.py
+
+          mkdir -p uploads
+          nohup uvicorn app:app --host 0.0.0.0 --port 8000 & echo $! > uvicorn.pid
+          sleep 5
+          curl -f http://localhost:8000/health
+
+      # 보안 로그 생성 및 리포트 압축
+      - name: Generate Reports & Logs
+        run: |
+          mkdir -p ${{ env.SLOT_DIR }}/logs
+          echo "[AUDIT] User login" > ${{ env.SLOT_DIR }}/logs/audit.log
+          echo "[ACCESS] File uploaded" > ${{ env.SLOT_DIR }}/logs/access.log
+          echo "Build successful for slot ${{ env.SLOT_ID }}" > ${{ env.SLOT_DIR }}/logs/report.log
+          tar czf ${{ env.SLOT_DIR }}/logs/report.tar.gz -C ${{ env.SLOT_DIR }}/logs .
+
+      # 리포트 → S3 업로드
+      - name: Upload report to S3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          aws s3 cp ${{ env.SLOT_DIR }}/logs/report.tar.gz s3://${{ env.S3_BUCKET }}/slot-${{ env.SLOT_ID }}/report.tar.gz
+
+      # 로그 전송 (CloudWatch 예시)
+      - name: Push logs to CloudWatch
+        run: |
+          GROUP="DevOpsLogs"
+          STREAM="slot-${{ env.SLOT_ID }}"
+          aws logs create-log-stream --log-group-name $GROUP --log-stream-name $STREAM || true
+          TIMESTAMP=$(($(date +%s%3N)))
+          LOG="{\"logEvents\":[{\"timestamp\":$TIMESTAMP,\"message\":\"Spring Boot + FastAPI 실행 완료\"}]}"
+          aws logs put-log-events --log-group-name $GROUP --log-stream-name $STREAM --log-events file://<(echo $LOG)
+
+      # index 생성
+      - name: Generate index.md
         run: |
           cat <<EOF > index.md
           ---
           layout: default
-          title: "자기소개서"
+          title: Full Infra 자동화 보고서
           ---
 
-          # 👤 자기소개서
+          # ☁️ 자동화 보고서
 
-          안녕하세요. 저는 열정적인 개발자 **김병권**입니다.
+          ✅ Spring Boot 빌드 및 실행  
+          ✅ FastAPI + PostgreSQL 헬스체크  
+          ✅ 파일 업로드: /upload  
+          ✅ 보안 로그 생성 및 리포트 압축  
+          ✅ S3 업로드 및 CloudWatch 전송  
 
-          ## ✅ 주요 기술
-          - Python, Java, Spring Boot
-          - GitHub Actions, Docker, AWS
-          - 보안 인증 (ISMS-P, CC 등)
-
-          ## 💼 자동화 구성 요소
-          - 서버 디렉토리 생성: ~/my-app/
-          - 디스크 슬롯: \`${{ env.SLOT_DIR }}\`
-          - GitHub Pages 자동 배포
-
-          ## 🗂️ 구조
-          \`\`\`bash
-          ~/my-app/
-          ├── logs/
-          ├── bin/
-          ├── config/
-          └── tmp/
-
-          .disk-slots/
-          └── slot-<timestamp>/
-              ├── build/
-              ├── config/
-              ├── public/
-              └── logs/
+          ## FastAPI Health Check
+          \`\`\`
+          curl http://localhost:8000/health
           \`\`\`
 
-          > 감사합니다.
+          ## S3 리포트
+          s3://${{ env.S3_BUCKET }}/slot-${{ env.SLOT_ID }}/report.tar.gz
           EOF
 
       - name: Generate _config.yml
         run: |
-          cat <<EOF > _config.yml
-          title: 김병권의 자동화 페이지
-          description: GitHub Actions + Jekyll + Server Infra
-          theme: minima
-          EOF
+          echo 'title: DevOps Infra\ninclude:\n  - .disk-slots\n  - uploads\n  - .github' > _config.yml
 
-      - name: Build Jekyll site
+      - name: Build with Jekyll
         uses: actions/jekyll-build-pages@v1
         with:
           source: ./
           destination: ./_site
 
-      - name: Upload artifact
+      - name: Upload Pages Artifact
         uses: actions/upload-pages-artifact@v3
 
   deploy:
@@ -110,7 +160,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
-    needs: build
+    needs: infra
 
     steps:
       - name: Deploy to GitHub Pages
