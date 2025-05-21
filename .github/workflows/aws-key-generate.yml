@@ -1,4 +1,4 @@
-name: AWS Key Generator
+name: Setup AWS OIDC and IAM Role
 
 on:
   workflow_dispatch:
@@ -8,17 +8,18 @@ permissions:
   contents: write
 
 env:
-  AWS_ACCOUNT_ID: "123456789012"              # ← 본인 계정 ID
-  AWS_ROLE_NAME: "github-actions-oidc-role"
+  AWS_ACCOUNT_ID: "123456789012"               # ← 본인 AWS 계정 ID
+  REPO_NAME: "davidkims/my-repo"               # ← 본인 GitHub 저장소 경로 (ORG/REPO)
+  ROLE_NAME: "github-actions-oidc-role"
+  IAM_USER_NAME: "github-deploy-user"
   AWS_REGION: "ap-northeast-2"
-  IAM_USERNAME: "github-deploy-user"
 
 jobs:
-  generate-aws-key:
+  setup-oidc-role:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Repository
+    - name: Checkout repository
       uses: actions/checkout@v4
 
     - name: Install AWS CLI and jq
@@ -28,37 +29,75 @@ jobs:
         python3 -m pip install --upgrade pip
         pip install awscli
 
-    - name: Configure AWS Credentials via OIDC
+    - name: Configure AWS OIDC credentials
       uses: aws-actions/configure-aws-credentials@v4
       with:
-        role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/${{ env.AWS_ROLE_NAME }}
+        role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/${{ env.ROLE_NAME }}
         aws-region: ${{ env.AWS_REGION }}
         audience: sts.amazonaws.com
+      continue-on-error: true
 
-    - name: Create AWS Access Key
-      id: create_key
+    - name: Generate and run OIDC setup script
       run: |
-        echo "🔐 Creating AWS Access Key for user: $IAM_USERNAME"
-        ACCESS_KEY_JSON=$(aws iam create-access-key --user-name $IAM_USERNAME)
+        cat <<EOF > setup-aws-oidc.sh
+        #!/bin/bash
 
-        echo "$ACCESS_KEY_JSON" > .github/workflows/key-log.log
+        AWS_ACCOUNT_ID="${{ env.AWS_ACCOUNT_ID }}"
+        REPO_NAME="${{ env.REPO_NAME }}"
+        ROLE_NAME="${{ env.ROLE_NAME }}"
+        IAM_USER_NAME="${{ env.IAM_USER_NAME }}"
+        REGION="${{ env.AWS_REGION }}"
 
-        ACCESS_KEY_ID=$(echo "$ACCESS_KEY_JSON" | jq -r .AccessKey.AccessKeyId)
-        SECRET_KEY=$(echo "$ACCESS_KEY_JSON" | jq -r .AccessKey.SecretAccessKey)
+        echo "📌 [1/3] OIDC 공급자 존재 여부 확인 및 생성"
+        OIDC_EXISTS=\$(aws iam list-open-id-connect-providers | grep token.actions.githubusercontent.com || true)
 
-        echo "ACCESS_KEY_ID=$ACCESS_KEY_ID" >> $GITHUB_ENV
-        echo "SECRET_KEY=$SECRET_KEY" >> $GITHUB_ENV
+        if [ -z "\$OIDC_EXISTS" ]; then
+          aws iam create-open-id-connect-provider \\
+            --url https://token.actions.githubusercontent.com \\
+            --client-id-list sts.amazonaws.com \\
+            --thumbprint-list "6938fd4d98bab03faadb97b34396831e3780aea1"
+          echo "✅ OIDC 공급자 생성 완료"
+        else
+          echo "✅ OIDC 공급자 이미 존재함"
+        fi
 
-    - name: Show Key in Logs (Debug only – Remove in production)
-      run: |
-        echo "🪪 AccessKeyId: $ACCESS_KEY_ID"
-        echo "🕶 SecretAccessKey: $SECRET_KEY"
-        echo "📝 Log file created: .github/workflows/key-log.log"
+        echo "📌 [2/3] IAM 역할 생성 (OIDC 인증용)"
+        aws iam create-role --role-name "\$ROLE_NAME" --assume-role-policy-document "{
+          \\"Version\\": \\"2012-10-17\\",
+          \\"Statement\\": [{
+            \\"Effect\\": \\"Allow\\",
+            \\"Principal\\": {
+              \\"Federated\\": \\"arn:aws:iam::\$AWS_ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com\\"
+            },
+            \\"Action\\": \\"sts:AssumeRoleWithWebIdentity\\",
+            \\"Condition\\": {
+              \\"StringLike\\": {
+                \\"token.actions.githubusercontent.com:sub\\": \\"repo:\$REPO_NAME:*\\"
+              },
+              \\"StringEquals\\": {
+                \\"token.actions.githubusercontent.com:aud\\": \\"sts.amazonaws.com\\"
+              }
+            }
+          }]
+        }" || echo "ℹ️ 역할 이미 존재함. 건너뜁니다."
 
-    - name: Commit Key Log
-      run: |
-        git config user.name "github-actions"
-        git config user.email "actions@github.com"
-        git add .github/workflows/key-log.log
-        git commit -m "🔐 AWS Access Key generated and logged"
-        git push
+        echo "📌 [3/3] 역할에 정책 부여 (IAM 키 생성 권한)"
+        aws iam put-role-policy --role-name "\$ROLE_NAME" --policy-name allow-access-key --policy-document "{
+          \\"Version\\": \\"2012-10-17\\",
+          \\"Statement\\": [{
+            \\"Effect\\": \\"Allow\\",
+            \\"Action\\": [
+              \\"iam:CreateAccessKey\\",
+              \\"iam:ListAccessKeys\\",
+              \\"iam:GetUser\\",
+              \\"iam:DeleteAccessKey\\"
+            ],
+            \\"Resource\\": \\"arn:aws:iam::\$AWS_ACCOUNT_ID:user/\$IAM_USER_NAME\\"
+          }]
+        }"
+
+        echo "✅ 모든 설정 완료 (OIDC + 역할 + 정책)"
+        EOF
+
+        chmod +x setup-aws-oidc.sh
+        ./setup-aws-oidc.sh
