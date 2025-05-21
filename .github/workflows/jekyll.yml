@@ -1,4 +1,4 @@
-name: Deploy Jekyll Personal Page with Pages Auto-Enablement
+name: Full Auto Deploy to GitHub Pages
 
 on:
   push:
@@ -18,28 +18,58 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # 📦 1. 체크아웃
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # GitHub Pages 자동 활성화 (build_type: workflow)
-      - name: Enable GitHub Pages via REST API
+      # ⚙️ 2. GitHub Pages REST API로 강제 활성화
+      - name: Enable GitHub Pages via API
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
         run: |
-          echo "🔧 Activating GitHub Pages..."
+          echo "🔧 Enabling GitHub Pages via API..."
           curl -L -X PUT \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
             https://api.github.com/repos/$OWNER/$REPO/pages \
             -d '{"build_type":"workflow"}'
 
-      # 오류 원인이던 잘못된 token, enablement 제거
+      # ⚙️ 3. GitHub Pages 설정
       - name: Setup GitHub Pages
         uses: actions/configure-pages@v5
 
-      - name: Generate 자기소개 페이지 (index.md)
+      # 📁 4. 디렉토리/서버 초기화 + 권한 설정
+      - name: Setup Server Folders and Permissions
+        run: |
+          echo "📁 Creating server directories..."
+          mkdir -p ~/my-app/logs
+          mkdir -p ~/my-app/bin
+          mkdir -p ~/my-app/config
+          chmod -R 755 ~/my-app
+          echo "✅ Server structure ready"
+
+      # 💽 5. 디스크 슬롯 기반 리소스 폴더 자동 생성
+      - name: Create Disk Slot Structure
+        run: |
+          TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
+          SLOT_DIR=".disk-slots/slot-${TIMESTAMP}"
+          mkdir -p "${SLOT_DIR}/build"
+          mkdir -p "${SLOT_DIR}/config"
+          mkdir -p "${SLOT_DIR}/public"
+          echo "SLOT_DIR=${SLOT_DIR}" >> $GITHUB_ENV
+          echo "✅ Created disk slot: $SLOT_DIR"
+
+      # 🔧 6. 기본 프로그램 설치 (예: unzip, curl 등)
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl unzip tree
+          echo "✅ Dependencies installed"
+
+      # 📄 7. 자기소개 페이지 생성
+      - name: Generate index.md
         run: |
           cat <<EOF > index.md
           ---
@@ -50,38 +80,44 @@ jobs:
           # 👤 자기소개서
 
           안녕하세요. 저는 열정적인 개발자 **김병권**입니다.  
-          다양한 기술 스택을 활용해 자동화와 성능 최적화에 집중합니다.
+          자동화, 클라우드, 보안, 성능 최적화에 집중합니다.
 
-          ## 📌 주요 기술
+          ## 주요 기술
           - Python, Java, Spring Boot
           - GitHub Actions, Docker, AWS
-          - 보안 인증 (ISMS-P, CC 등)
+          - 보안 인증 (ISMS-P, CC)
 
-          ## 💼 프로젝트 경험
-          - ✅ GitHub Actions 기반 자동 배포 구축
-          - ✅ Flask → FastAPI 전환 및 최적화
-          - ✅ Datadog, Checkmarx 통합 자동화 구성
+          ## 디스크 슬롯 관리 시스템
+          현재 실행 슬롯: \`${{ env.SLOT_DIR }}\`
 
-          ## 🎯 목표
-          지속적인 학습과 성장을 통해 더 나은 솔루션을 설계하고 구현하는 개발자가 되겠습니다.
+          ## 서버 구조
+          \`\`\`bash
+          ~/my-app/
+          ├── logs/
+          ├── bin/
+          └── config/
+          \`\`\`
 
-          > 감사합니다!
+          > 모든 리소스는 자동 생성 및 배포됩니다.
           EOF
 
-      - name: Generate Jekyll config (_config.yml)
+      # 📄 8. Jekyll 설정 파일
+      - name: Generate _config.yml
         run: |
           cat <<EOF > _config.yml
-          title: 김병권의 자기소개 페이지
-          description: GitHub Actions + Jekyll + Pages 자동화 예제
+          title: 김병권의 홈페이지
+          description: Jekyll + GitHub Actions 자동 배포 시스템
           theme: minima
           EOF
 
-      - name: Build Jekyll site
+      # 🛠️ 9. Jekyll Build
+      - name: Build site
         uses: actions/jekyll-build-pages@v1
         with:
           source: ./
           destination: ./_site
 
+      # 📦 10. GitHub Pages 업로드 준비
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3
 
