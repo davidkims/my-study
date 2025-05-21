@@ -33,7 +33,9 @@ jobs:
 
       - name: Create Python DB script
         run: |
-          echo 'import psycopg2
+          cat <<EOF > check_postgres.py
+import psycopg2
+
 try:
     conn = psycopg2.connect(
         dbname="mydb",
@@ -47,23 +49,25 @@ try:
     print("✅ PostgreSQL 연결 성공:", cur.fetchone()[0])
 except Exception as e:
     print("❌ PostgreSQL 연결 실패:", e)
-' > check_postgres.py
+EOF
 
       - name: Run PostgreSQL DB connection script
         run: python3 check_postgres.py
 
       - name: Generate index.md
         run: |
-          echo '---
+          cat <<EOF > index.md
+---
 layout: default
 title: PostgreSQL 테스트
 ---
 
 # GitHub Actions + Jekyll + PostgreSQL
 
-- DB 연결 확인 결과는 위 단계에서 출력됩니다.
-- 이 페이지는 GitHub Pages로 자동 배포됩니다.
-' > index.md
+✅ psycopg2를 통한 DB 연결 확인 결과는 Actions 로그에 출력됩니다.
+
+이 페이지는 Jekyll로 변환되어 GitHub Pages로 배포됩니다.
+EOF
 
       - name: Generate _config.yml
         run: |
