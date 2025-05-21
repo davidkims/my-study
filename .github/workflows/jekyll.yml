@@ -21,19 +21,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Enable GitHub Pages via API
+      # GitHub Pages 자동 활성화 (build_type: workflow)
+      - name: Enable GitHub Pages via REST API
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
         run: |
-          echo "🔧 Enabling GitHub Pages Source = GitHub Actions..."
-          curl -X PUT \
+          echo "🔧 Activating GitHub Pages..."
+          curl -L -X PUT \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
             https://api.github.com/repos/$OWNER/$REPO/pages \
             -d '{"build_type":"workflow"}'
 
+      # 오류 원인이던 잘못된 token, enablement 제거
       - name: Setup GitHub Pages
         uses: actions/configure-pages@v5
 
