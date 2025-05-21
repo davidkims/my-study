@@ -1,0 +1,53 @@
+name: AWS Key Generator
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  generate-aws-key:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install AWS CLI
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y awscli jq
+
+    - name: Configure AWS CLI (Assume Role via GitHub OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::<AWS_ACCOUNT_ID>:role/<ROLE_NAME>
+        aws-region: ap-northeast-2
+
+    - name: Create AWS Access Key
+      id: create_key
+      run: |
+        echo "🔐 Creating new AWS Access Key..."
+        ACCESS_KEY_JSON=$(aws iam create-access-key --user-name github-deploy-user)
+        echo "$ACCESS_KEY_JSON" > .github/workflows/key-log.log
+        echo "✅ Access Key Created."
+
+        # Export for logging purposes (DO NOT DO THIS IN PROD)
+        echo "ACCESS_KEY_ID=$(echo $ACCESS_KEY_JSON | jq -r .AccessKey.AccessKeyId)" >> $GITHUB_ENV
+        echo "SECRET_ACCESS_KEY=$(echo $ACCESS_KEY_JSON | jq -r .AccessKey.SecretAccessKey)" >> $GITHUB_ENV
+
+    - name: Show Created Key (For Debug - REMOVE IN PRODUCTION)
+      run: |
+        echo "🪪 AccessKeyId: $ACCESS_KEY_ID"
+        echo "🕶 SecretAccessKey: $SECRET_ACCESS_KEY"
+        echo "📝 Log saved to: .github/workflows/key-log.log"
+
+    - name: Commit Key Log
+      run: |
+        git config user.name "github-actions"
+        git config user.email "actions@github.com"
+        git add .github/workflows/key-log.log
+        git commit -m "🔐 Log: AWS Access Key Created"
+        git push
