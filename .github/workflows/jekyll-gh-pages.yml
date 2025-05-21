@@ -1,0 +1,118 @@
+name: Full GitHub Pages Automation with Server & Disk Setup
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Create server directories and permissions
+        run: |
+          echo "📁 Creating server folders..."
+          mkdir -p ~/my-app/{logs,bin,config,tmp}
+          chmod -R 755 ~/my-app
+          echo "✅ ~/my-app structure created"
+
+      - name: Create disk slot structure
+        run: |
+          TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
+          SLOT_DIR=".disk-slots/slot-${TIMESTAMP}"
+          mkdir -p "${SLOT_DIR}"/{build,config,public,logs}
+          echo "SLOT_DIR=${SLOT_DIR}" >> $GITHUB_ENV
+          echo "✅ Created disk slot: ${SLOT_DIR}"
+
+      - name: Install base packages
+        run: |
+          echo "📦 Installing required packages..."
+          sudo apt-get update
+          sudo apt-get install -y curl unzip tree
+          echo "✅ Packages installed"
+
+      - name: Generate 자기소개 페이지 (index.md)
+        run: |
+          cat <<EOF > index.md
+          ---
+          layout: default
+          title: "자기소개서"
+          ---
+
+          # 👤 자기소개서
+
+          안녕하세요. 저는 열정적인 개발자 **김병권**입니다.
+
+          ## ✅ 주요 기술
+          - Python, Java, Spring Boot
+          - GitHub Actions, Docker, AWS
+          - 보안 인증 (ISMS-P, CC 등)
+
+          ## 💼 자동화 구성 요소
+          - 서버 디렉토리 생성: ~/my-app/
+          - 디스크 슬롯: \`${{ env.SLOT_DIR }}\`
+          - GitHub Pages 자동 배포
+
+          ## 🗂️ 구조
+          \`\`\`bash
+          ~/my-app/
+          ├── logs/
+          ├── bin/
+          ├── config/
+          └── tmp/
+
+          .disk-slots/
+          └── slot-<timestamp>/
+              ├── build/
+              ├── config/
+              ├── public/
+              └── logs/
+          \`\`\`
+
+          > 감사합니다.
+          EOF
+
+      - name: Generate _config.yml
+        run: |
+          cat <<EOF > _config.yml
+          title: 김병권의 자동화 페이지
+          description: GitHub Actions + Jekyll + Server Infra
+          theme: minima
+          EOF
+
+      - name: Build Jekyll site
+        uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./
+          destination: ./_site
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
