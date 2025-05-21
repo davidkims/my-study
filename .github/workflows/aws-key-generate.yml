@@ -5,44 +5,49 @@ on:
 
 env:
   AWS_REGION: ap-northeast-2
-  AWS_ACCOUNT_ID: "123456789012" # ← 본인 계정 ID
+  AWS_ACCOUNT_ID: "123456789012"
   ROLE_NAME: github-actions-oidc-role
   IAM_USER_NAME: github-deploy-user
   REPO_NAME: davidkims/my-repo
 
 jobs:
   step1-create-oidc-role:
-    name: Step 1 - Create OIDC Provider and Role
+    name: Step 1 - Create OIDC Provider and IAM Role
     runs-on: ubuntu-latest
 
     steps:
-    - name: Install AWS CLI
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install AWS CLI and jq
       run: |
         sudo apt-get update
         sudo apt-get install -y jq
         python3 -m pip install --upgrade pip
         pip install awscli
 
-    - name: Configure AWS (Access Key)
-      run: |
-        aws configure set aws_access_key_id "${{ secrets.AWS_ACCESS_KEY_ID }}"
-        aws configure set aws_secret_access_key "${{ secrets.AWS_SECRET_ACCESS_KEY }}"
-        aws configure set region $AWS_REGION
+    - name: Authenticate to AWS with access keys
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
 
-    - name: Create OIDC Provider and Role
+    - name: Create OIDC provider, IAM role, and attach policy
       run: |
+        echo "📌 Checking for existing OIDC provider..."
         OIDC_EXISTS=$(aws iam list-open-id-connect-providers | grep token.actions.githubusercontent.com || true)
         if [ -z "$OIDC_EXISTS" ]; then
-          echo "Creating OIDC provider..."
+          echo "✅ Creating OIDC provider..."
           aws iam create-open-id-connect-provider \
             --url https://token.actions.githubusercontent.com \
             --client-id-list sts.amazonaws.com \
             --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
         else
-          echo "OIDC provider already exists."
+          echo "✅ OIDC provider already exists."
         fi
 
-        echo "Creating IAM role for GitHub OIDC..."
+        echo "📌 Creating IAM role for GitHub OIDC..."
         TRUST_POLICY=$(cat <<EOF
         {
           "Version": "2012-10-17",
@@ -65,9 +70,9 @@ jobs:
         EOF
         )
 
-        aws iam create-role --role-name "${ROLE_NAME}" --assume-role-policy-document "$TRUST_POLICY" || echo "Role already exists."
+        aws iam create-role --role-name "${ROLE_NAME}" --assume-role-policy-document "$TRUST_POLICY" || echo "ℹ️ Role already exists."
 
-        echo "Attaching IAM policy to role..."
+        echo "📌 Attaching IAM inline policy..."
         POLICY=$(cat <<EOF
         {
           "Version": "2012-10-17",
@@ -85,10 +90,13 @@ jobs:
         EOF
         )
 
-        aws iam put-role-policy --role-name "${ROLE_NAME}" --policy-name allow-access-key --policy-document "$POLICY"
+        aws iam put-role-policy \
+          --role-name "${ROLE_NAME}" \
+          --policy-name allow-access-key \
+          --policy-document "$POLICY"
 
-  step2-use-oidc:
-    name: Step 2 - Authenticate via OIDC and Create Key
+  step2-create-key-via-oidc:
+    name: Step 2 - Use OIDC and Generate Access Key
     needs: step1-create-oidc-role
     runs-on: ubuntu-latest
 
@@ -97,7 +105,7 @@ jobs:
       contents: write
 
     steps:
-    - name: Checkout Repo
+    - name: Checkout Repository
       uses: actions/checkout@v4
 
     - name: Install AWS CLI
@@ -107,28 +115,28 @@ jobs:
         python3 -m pip install --upgrade pip
         pip install awscli
 
-    - name: Authenticate with AWS via OIDC
+    - name: Authenticate to AWS using OIDC
       uses: aws-actions/configure-aws-credentials@v4
       with:
         role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/${{ env.ROLE_NAME }}
         aws-region: ${{ env.AWS_REGION }}
         audience: sts.amazonaws.com
 
-    - name: Create IAM Access Key for ${{ env.IAM_USER_NAME }}
+    - name: Create Access Key
       run: |
         ACCESS_KEY_JSON=$(aws iam create-access-key --user-name $IAM_USER_NAME)
         echo "$ACCESS_KEY_JSON" > .github/workflows/key-log.log
 
+        echo "✅ Access key created and saved to key-log.log"
         ACCESS_KEY_ID=$(echo "$ACCESS_KEY_JSON" | jq -r .AccessKey.AccessKeyId)
         SECRET_KEY=$(echo "$ACCESS_KEY_JSON" | jq -r .AccessKey.SecretAccessKey)
+        echo "🪪 AccessKeyId: $ACCESS_KEY_ID"
+        echo "🔐 SecretAccessKey: $SECRET_KEY"
 
-        echo "AccessKeyId: $ACCESS_KEY_ID"
-        echo "SecretAccessKey: $SECRET_KEY"
-
-    - name: Commit log to repository
+    - name: Commit Key Log
       run: |
         git config user.name "github-actions"
         git config user.email "actions@github.com"
         git add .github/workflows/key-log.log
-        git commit -m "🔐 Generated AWS Access Key via OIDC"
+        git commit -m "🔐 IAM access key generated and logged"
         git push
